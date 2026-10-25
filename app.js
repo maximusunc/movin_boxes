@@ -1,0 +1,2192 @@
+(function(){
+"use strict";
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} },
+  del(k){ try{ localStorage.removeItem(k); }catch(e){} }
+};
+const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+const cv = $("floor"), ctx = cv.getContext("2d");
+let cell = 40, dpr = 1, COL = {};
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function readColors(){ ["wet","floor","seam","rack","beam","checked","visited","frontier","flash","robot","dock","target","bad","ink","panel","muted","box","box-edge","box-ink","belt","roller"].forEach(k => COL[k] = css("--" + k)); }
+function rr(x, y, w, h, r){ r = Math.max(0, Math.min(r, w/2, h/2)); ctx.beginPath(); ctx.moveTo(x+r, y); ctx.arcTo(x+w, y, x+w, y+h, r); ctx.arcTo(x+w, y+h, x, y+h, r); ctx.arcTo(x, y+h, x, y, r); ctx.arcTo(x, y, x+w, y, r); ctx.closePath(); }
+const fmt = p => "(" + p[0] + ", " + p[1] + ")";
+const same = (a, b) => a[0] === b[0] && a[1] === b[1];
+const DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
+
+let P = null;         // current problem
+let level = null;     // current input for the current problem
+let run = null;       // results of the last traced run
+let t = 0, playing = false, lastTs = 0;
+let editing = false;
+
+const isShelf1 = v => v === 1;
+function refBFS(L, isShelf = isShelf1){
+  const R = L.grid.length, C = L.grid[0].length;
+  const dist = Array.from({length:R}, () => Array(C).fill(-1));
+  const par = Array.from({length:R}, () => Array(C).fill(null));
+  const [sr, sc] = L.start; dist[sr][sc] = 0;
+  const q = [[sr, sc]]; let h = 0;
+  while (h < q.length){
+    const [r, c] = q[h++];
+    for (const [dr, dc] of DIRS){
+      const nr = r+dr, nc = c+dc;
+      if (nr<0||nc<0||nr>=R||nc>=C||isShelf(L.grid[nr][nc])||dist[nr][nc]!==-1) continue;
+      dist[nr][nc] = dist[r][c]+1; par[nr][nc] = [r, c]; q.push([nr, nc]);
+    }
+  }
+  const [tr, tc] = L.target; const d = dist[tr][tc];
+  let path = null;
+  if (d >= 0){ path = []; let cur = [tr, tc]; while (cur){ path.push(cur); cur = par[cur[0]][cur[1]]; } path.reverse(); }
+  return {d, path, explored: q.length};
+}
+function refDijkstra(L){
+  const R = L.grid.length, C = L.grid[0].length, INF = 1e9;
+  const dist = Array.from({length:R}, () => Array(C).fill(INF));
+  const par = Array.from({length:R}, () => Array(C).fill(null));
+  const done = Array.from({length:R}, () => Array(C).fill(false));
+  const [sr, sc] = L.start; dist[sr][sc] = 0;
+  let explored = 0;
+  for (;;){
+    let best = INF, br = -1, bc = -1;
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) if (!done[r][c] && dist[r][c] < best){ best = dist[r][c]; br = r; bc = c; }
+    if (br < 0) break;
+    done[br][bc] = true; explored++;
+    if (br === L.target[0] && bc === L.target[1]) break;
+    for (const [dr, dc] of DIRS){
+      const nr = br+dr, nc = bc+dc;
+      if (nr<0||nc<0||nr>=R||nc>=C||L.grid[nr][nc] < 0) continue;
+      const nd = best + L.grid[nr][nc];
+      if (nd < dist[nr][nc]){ dist[nr][nc] = nd; par[nr][nc] = [br, bc]; }
+    }
+  }
+  const [tr, tc] = L.target; const d = dist[tr][tc] >= INF ? -1 : dist[tr][tc];
+  let path = null;
+  if (d >= 0){ path = []; let cur = [tr, tc]; while (cur){ path.push(cur); cur = par[cur[0]][cur[1]]; } path.reverse(); }
+  return {d, path, explored};
+}
+const pathCost = (L, P) => P.slice(1).reduce((a, p) => a + L.grid[p[0]][p[1]], 0);
+function judgeGrid(L, path, wet){
+  const isShelf = wet ? (v => v < 0) : isShelf1;
+  const ref = wet ? refDijkstra(L) : refBFS(L);
+  const R = L.grid.length, C = L.grid[0].length;
+  const res = {ref, valid: 0, bad: null};
+  if (path.length === 0){
+    if (ref.d < 0) return Object.assign(res, {status:"pass", title:"Correct", text:"The target is walled off, and you returned an empty path."});
+    return Object.assign(res, {status:"fail", title:"No path returned", text:"You returned [], but the target is reachable" + (wet ? " for a cost of " + ref.d + "." : " in " + ref.d + " moves.")});
+  }
+  const p0 = path[0];
+  if (!same(p0, L.start))
+    return Object.assign(res, {status:"fail", title:"Wrong starting cell", text:"The path should begin at the robot’s cell " + fmt(L.start) + ", but it begins at " + fmt(p0) + "."});
+  for (let i = 1; i < path.length; i++){
+    const a = path[i-1], b = path[i];
+    const out = b[0]<0||b[1]<0||b[0]>=R||b[1]>=C;
+    const man = Math.abs(a[0]-b[0]) + Math.abs(a[1]-b[1]);
+    let why = null;
+    if (out) why = "Step " + i + " drives off the floor to " + fmt(b) + ".";
+    else if (man === 0) why = "Step " + i + " stays put at " + fmt(b) + ". Each step should move one cell.";
+    else if (man === 2 && a[0] !== b[0] && a[1] !== b[1]) why = "Step " + i + " moves diagonally from " + fmt(a) + " to " + fmt(b) + ". Only up, down, left and right are allowed.";
+    else if (man !== 1) why = "Step " + i + " jumps from " + fmt(a) + " to " + fmt(b) + ", which isn’t a neighboring cell.";
+    else if (isShelf(L.grid[b[0]][b[1]])) why = "Step " + i + " drives into the shelf at " + fmt(b) + ".";
+    if (why){ res.valid = i-1; res.bad = {i}; return Object.assign(res, {status:"fail", title:"Robot crashed", text:why}); }
+  }
+  res.valid = path.length-1;
+  const last = path[path.length-1];
+  if (!same(last, L.target)){
+    if (ref.d < 0) return Object.assign(res, {status:"fail", title:"Wrong ending", text:"The path ends at " + fmt(last) + ". The target can’t be reached, so return []."});
+    return Object.assign(res, {status:"fail", title:"Stopped short", text:"The path ends at " + fmt(last) + ", not at the target " + fmt(L.target) + "."});
+  }
+  const moves = path.length-1;
+  if (wet){
+    const cost = pathCost(L, path); res.cost = cost;
+    if (cost > ref.d){
+      const fewest = refBFS(L, v => v < 0).d;
+      const hint = moves === fewest ? " It takes the fewest moves, which is what BFS finds, but wet cells cost more. Pop the cheapest cell first." : "";
+      return Object.assign(res, {status:"long", title:"Reached it, but not the cheapest", text:"Your path costs " + cost + ". The cheapest costs " + ref.d + "." + hint});
+    }
+    return Object.assign(res, {status:"pass", title:"Cheapest path found", text:"The robot reached the target for a cost of " + cost + " in " + moves + " moves, the cheapest possible."});
+  }
+  if (moves > ref.d) return Object.assign(res, {status:"long", title:"Valid, but not the shortest", text:"Your path takes " + moves + " moves. The shortest takes " + ref.d + ", so yours is " + (moves-ref.d) + " longer."});
+  return Object.assign(res, {status:"pass", title:"Shortest path found", text:"The robot reached the target in " + moves + " moves, the minimum possible."});
+}
+
+
+function drawGrid(){
+  const G = level.grid, R = G.length, C = G[0].length, s = cell, shelf = P.isShelf, wet = P.id === "wet";
+  const inb = (r, c) => r >= 0 && c >= 0 && r < R && c < C;
+  let idx = -1, reads = null, writes = null, vis = null, que = null, cur = null, dst = null;
+  if (run){
+    idx = Math.min(Math.floor(t), run.E) - 1;
+    if (t >= run.E) idx = run.E - 1;
+    reads = new Uint16Array(R*C); writes = new Uint8Array(R*C);
+    for (let i = 0; i <= idx; i++){ const e = run.events[i]; if (!inb(e.r, e.c)) continue; if (e.k === "read") reads[e.r*C+e.c]++; else writes[e.r*C+e.c] = 1; }
+    if (idx >= 0){ vis = run.vAt[idx]; que = run.qAt[idx]; if (run.dAt) dst = run.dAt[idx]; if (t < run.E) cur = run.events[idx]; }
+  }
+  const visSet = new Uint8Array(R*C);
+  if (vis) for (const p of vis) if (inb(p[0], p[1])) visSet[p[0]*C+p[1]] = 1;
+  if (writes) for (let i = 0; i < writes.length; i++) if (writes[i]) visSet[i] = 1;
+
+  ctx.fillStyle = COL.floor; ctx.fillRect(0, 0, C*s, R*s);
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++){
+    const k = r*C+c;
+    if (shelf(G[r][c])) continue;
+    if (visSet[k]){ ctx.fillStyle = COL.visited; ctx.fillRect(c*s, r*s, s, s); }
+    else if (reads && reads[k]){ ctx.fillStyle = COL.checked; ctx.fillRect(c*s, r*s, s, s); }
+    if (wet && G[r][c] > 1){
+      ctx.fillStyle = COL.wet; ctx.globalAlpha = visSet[k] || (reads && reads[k]) ? .7 : 1;
+      ctx.beginPath(); ctx.ellipse(c*s + s*.5, r*s + s*.52, s*.4, s*.3, -.3, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(c*s + s*.3, r*s + s*.3, s*.16, s*.12, 0, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+  if (wet){
+    ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.font = "600 " + Math.max(9, Math.round(s*.24)) + "px Barlow, system-ui, sans-serif";
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++){
+      if (shelf(G[r][c]) || G[r][c] <= 1) continue;
+      ctx.fillStyle = COL.ink; ctx.globalAlpha = .85;
+      ctx.fillText(String(G[r][c]), c*s + s*.08, r*s + s*.06);
+    }
+    ctx.globalAlpha = 1;
+  }
+  ctx.strokeStyle = COL.seam; ctx.lineWidth = 1; ctx.beginPath();
+  for (let r = 1; r < R; r++){ ctx.moveTo(0, r*s+.5); ctx.lineTo(C*s, r*s+.5); }
+  for (let c = 1; c < C; c++){ ctx.moveTo(c*s+.5, 0); ctx.lineTo(c*s+.5, R*s); }
+  ctx.stroke();
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++){
+    if (!shelf(G[r][c])) continue;
+    const x = c*s, y = r*s, p = Math.max(2, s*.08);
+    ctx.fillStyle = COL.rack; rr(x+p, y+p, s-2*p, s-2*p, Math.max(2, s*.08)); ctx.fill();
+    ctx.fillStyle = COL.beam; const bh = Math.max(2, s*.07);
+    ctx.fillRect(x+p, y+s*.33-bh/2, s-2*p, bh); ctx.fillRect(x+p, y+s*.66-bh/2, s-2*p, bh);
+    if (visSet[r*C+c]){ ctx.fillStyle = COL.visited; ctx.globalAlpha = .7; rr(x+p, y+p, s-2*p, s-2*p, Math.max(2, s*.08)); ctx.fill(); ctx.globalAlpha = 1; }
+    else if (reads && reads[r*C+c]){ ctx.fillStyle = COL.checked; ctx.globalAlpha = .45; rr(x+p, y+p, s-2*p, s-2*p, Math.max(2, s*.08)); ctx.fill(); ctx.globalAlpha = 1; }
+  }
+  const [sr, sc] = level.start, [tr, tc] = level.target;
+  if (P.robot){
+  ctx.setLineDash([Math.max(3, s*.12), Math.max(2, s*.08)]);
+  ctx.strokeStyle = COL.dock; ctx.lineWidth = Math.max(1.5, s*.05);
+  rr(sc*s+s*.12, sr*s+s*.12, s*.76, s*.76, s*.12); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = COL.target; rr(tc*s+s*.16, tr*s+s*.16, s*.68, s*.68, s*.1); ctx.fill();
+  ctx.strokeStyle = COL.floor; ctx.lineWidth = Math.max(1.5, s*.06);
+  ctx.beginPath(); ctx.moveTo(tc*s+s*.16, tr*s+s*.16); ctx.lineTo(tc*s+s*.84, tr*s+s*.84); ctx.moveTo(tc*s+s*.84, tr*s+s*.16); ctx.lineTo(tc*s+s*.16, tr*s+s*.84); ctx.stroke();
+  ctx.strokeStyle = COL.target; ctx.lineWidth = Math.max(1.5, s*.05); rr(tc*s+s*.16, tr*s+s*.16, s*.68, s*.68, s*.1); ctx.stroke();
+  }
+
+  if (que && t < run.E){
+    ctx.strokeStyle = COL.frontier; ctx.lineWidth = Math.max(2, s*.08);
+    for (const p of que) if (inb(p[0], p[1])){ const i = ctx.lineWidth/2 + 1; rr(p[1]*s+i, p[0]*s+i, s-2*i, s-2*i, s*.1); ctx.stroke(); }
+  }
+  if (dst && t < run.E){
+    ctx.textAlign = "right"; ctx.textBaseline = "bottom"; ctx.font = "700 " + Math.max(10, Math.round(s*.3)) + "px 'Barlow Condensed', system-ui, sans-serif";
+    ctx.fillStyle = COL.ink;
+    for (const [r, c, d] of dst){ if (!inb(r, c) || (r === level.start[0] && c === level.start[1] && d === 0)) continue; ctx.fillText(String(Math.round(d*10)/10), c*s + s - s*.08, r*s + s - s*.04); }
+  }
+  if (cur && inb(cur.r, cur.c)){
+    ctx.strokeStyle = COL.flash; ctx.lineWidth = Math.max(3, s*.12);
+    const i = ctx.lineWidth/2; rr(cur.c*s+i, cur.r*s+i, s-2*i, s-2*i, s*.12); ctx.stroke();
+  }
+
+  let rpos = [sr, sc], heading = 0, shake = 0, crashAt = null;
+  if (P.path && run && run.hasRet && run.verdict && run.verdict.ref && t >= run.E && Array.isArray(run.ret)){
+    const P = run.ret, v = run.verdict;
+    const u = Math.min(t - run.E, run.S), k = Math.floor(u), f = u - k;
+    const drawn = Math.min(k + (k < v.valid ? f : 0), v.valid);
+    ctx.strokeStyle = COL.robot; ctx.lineWidth = Math.max(3, s*.14); ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.globalAlpha = .55; ctx.beginPath(); ctx.moveTo(P[0][1]*s+s/2, P[0][0]*s+s/2);
+    for (let i = 1; i <= Math.floor(drawn); i++) ctx.lineTo(P[i][1]*s+s/2, P[i][0]*s+s/2);
+    const fl = Math.floor(drawn), fr = drawn - fl;
+    if (fr > 0 && P[fl+1]) ctx.lineTo((P[fl][1] + (P[fl+1][1]-P[fl][1])*fr)*s+s/2, (P[fl][0] + (P[fl+1][0]-P[fl][0])*fr)*s+s/2);
+    ctx.stroke(); ctx.globalAlpha = 1;
+    if (P.length && k < v.valid){
+      const a = P[k], b = P[k+1];
+      rpos = [a[0] + (b[0]-a[0])*f, a[1] + (b[1]-a[1])*f]; heading = Math.atan2(b[0]-a[0], b[1]-a[1]);
+    } else if (v.bad && k === v.valid && u < run.S){
+      const a = P[v.valid], b = P[v.bad.i];
+      let dr = b[0]-a[0], dc = b[1]-a[1]; const m = Math.hypot(dr, dc) || 1; dr /= m; dc /= m;
+      const push = f < .5 ? f*2*.42 : (1-f)*2*.42;
+      rpos = [a[0] + dr*push, a[1] + dc*push]; heading = Math.atan2(dr, dc);
+      if (f > .45) shake = Math.sin(f*40) * .06 * (1-f);
+      crashAt = b;
+    } else if (P.length){
+      const last = P[Math.min(v.valid, P.length-1)]; rpos = last.slice();
+      if (v.valid > 0){ const pr = P[v.valid-1]; heading = Math.atan2(last[0]-pr[0], last[1]-pr[1]); }
+      if (v.bad) crashAt = P[v.bad.i];
+    }
+    if (t >= run.T && v.status !== "pass" && v.ref.path && !(wet && v.cost === v.ref.d)){
+      ctx.setLineDash([s*.15, s*.15]); ctx.strokeStyle = COL.target; ctx.lineWidth = Math.max(2, s*.07);
+      ctx.beginPath(); v.ref.path.forEach((p, i) => { const X = p[1]*s+s/2, Y = p[0]*s+s/2; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    if (crashAt && (t >= run.T || (k === v.valid && f > .4))){
+      const [cr, cc] = crashAt;
+      const X = Math.max(0, Math.min(C-1, cc))*s + s/2, Y = Math.max(0, Math.min(R-1, cr))*s + s/2, z = s*.22;
+      ctx.strokeStyle = COL.bad; ctx.lineWidth = Math.max(3, s*.1); ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(X-z, Y-z); ctx.lineTo(X+z, Y+z); ctx.moveTo(X+z, Y-z); ctx.lineTo(X-z, Y+z); ctx.stroke();
+    }
+  }
+  if (P.robot) drawRobot(rpos[0] + shake, rpos[1] + shake, heading);
+}
+function drawRobot(r, c, heading){
+  const s = cell, X = c*s + s/2, Y = r*s + s/2, rad = s*.34;
+  ctx.save(); ctx.translate(X, Y); ctx.rotate(heading);
+  ctx.fillStyle = "rgba(0,0,0,.18)"; ctx.beginPath(); ctx.arc(1.5, 2, rad, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = COL.robot; ctx.beginPath(); ctx.arc(0, 0, rad, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = COL.ink; ctx.globalAlpha = .85; rr(-rad*.45, -rad*.45, rad*.9, rad*.9, rad*.15); ctx.fill(); ctx.globalAlpha = 1;
+  ctx.fillStyle = COL.robot; ctx.beginPath(); ctx.arc(0, 0, rad*.22, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = COL.panel; ctx.beginPath(); ctx.moveTo(rad*.98, 0); ctx.lineTo(rad*.62, -rad*.26); ctx.lineTo(rad*.62, rad*.26); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+
+function refWindow(L){
+  let best = 0, at = null, l = 0, tot = 0;
+  L.weights.forEach((w, r) => {
+    tot += w;
+    while (tot > L.limit && l <= r){ tot -= L.weights[l]; l++; }
+    if (r - l + 1 > best){ best = r - l + 1; at = [l, r]; }
+  });
+  return {best, at};
+}
+function judgeBelt(L, win){
+  const ref = refWindow(L), n = L.weights.length;
+  const res = {ref};
+  if (win === null){
+    if (ref.best === 0) return Object.assign(res, {status:"pass", title:"Correct", text:"Every package is over the limit, so None is right."});
+    return Object.assign(res, {status:"fail", title:"Something fits", text:"You returned None, but a stretch of " + ref.best + " package" + (ref.best > 1 ? "s" : "") + " fits under the limit."});
+  }
+  const [i, j] = win;
+  if (i < 0 || j >= n || i > j)
+    return Object.assign(res, {status:"fail", title:"Not a real stretch", text:"(" + i + ", " + j + ") isn’t a valid stretch. Use 0 ≤ start ≤ end ≤ " + (n-1) + ", with end inclusive."});
+  const sum = L.weights.slice(i, j+1).reduce((a, b) => a + b, 0);
+  res.sum = sum;
+  if (sum > L.limit) return Object.assign(res, {status:"fail", title:"Truck overloaded", text:"Packages " + i + " to " + j + " weigh " + sum + ", over the limit of " + L.limit + ". Remember that end is inclusive."});
+  const len = j - i + 1;
+  if (len < ref.best) return Object.assign(res, {status:"fail", title:"Fits, but not the longest", text:"Your stretch has " + len + " package" + (len > 1 ? "s" : "") + ". The longest that fits has " + ref.best + "."});
+  return Object.assign(res, {status:"pass", title:"Longest stretch loaded", text:"Packages " + i + " to " + j + " weigh " + sum + " of " + L.limit + ", and no longer stretch fits."});
+}
+const PICK = (w, names) => { for (const n of names) if (w[n] !== undefined && typeof w[n] === "number") return [n, w[n]]; return [null, null]; };
+function resolveWatch(w){
+  if (!w) return {};
+  let [ln, L] = PICK(w, ["left", "l", "start", "lo"]);
+  let [rn, R] = PICK(w, ["right", "r", "end", "hi"]);
+  if (rn === null){
+    if (w.j !== undefined && typeof w.j === "number"){ R = w.j; rn = "j"; if (ln === null && typeof w.i === "number"){ L = w.i; ln = "i"; } }
+    else if (typeof w.i === "number" && ln !== null){ R = w.i; rn = "i"; }
+  }
+  const [, sum] = PICK(w, ["total", "window_sum", "window", "curr", "cur", "current", "load", "s", "acc", "running"]);
+  let best = null;
+  for (const n of ["best", "best_len", "max_len", "longest", "ans", "res", "result"]){
+    if (w[n] === undefined) continue;
+    best = Array.isArray(w[n]) ? (w[n][1] - w[n][0] + 1) : w[n]; break;
+  }
+  return {L, R, sum, best};
+}
+let beltGeo = null;
+function sizeBelt(w){
+    const n = level.weights.length, pad = 6, gap = 3;
+    const b = Math.max(16, Math.floor(Math.min(58, (w - 2*pad - gap*(n-1)) / n)));
+    const rowW = n*b + gap*(n-1) + 2*pad;
+    const W = Math.max(rowW, Math.min(w, 520));
+    const ox = Math.floor((W - (n*b + gap*(n-1))) / 2);
+    const gaugeH = 30, boxTop = gaugeH + 18, baseY = boxTop + Math.round(b*1.5);
+    beltGeo = {n, b, gap, ox, gaugeH, boxTop, baseY, W, H: baseY + 112};
+    return [W, beltGeo.H];
+  }
+
+function drawBelt(){
+  if (!beltGeo) return;
+  const g = beltGeo, L = level, n = L.weights.length, b = g.b;
+  const maxW = Math.max(...L.weights, 1);
+  const bx = i => g.ox + i*(b + g.gap);
+  const bh = w => Math.round(b * (0.62 + 0.88 * Math.min(w, maxW) / maxW));
+  ctx.clearRect(0, 0, g.W, g.H);
+
+  // state at time t
+  let idx = -1, reads = new Uint16Array(n), w = null, cur = null;
+  if (run){
+    idx = (t >= run.E ? run.E : Math.floor(t)) - 1;
+    for (let i = 0; i <= idx; i++){ const e = run.events[i]; if (e.i >= 0 && e.i < n) reads[e.i]++; }
+    if (idx >= 0){ w = run.wAt[idx]; if (t < run.E) cur = run.events[idx]; }
+  }
+  const final = run && run.hasRet && t >= run.E;
+  const u = final ? Math.min(1, (t - run.E) / Math.max(1, run.S)) : 0;
+  const ret = final ? run.ret : null;
+  const v = run && run.verdict;
+
+  // window (live) or returned window (final)
+  let wl = null, wr = null, sum = null;
+  if (final){
+    if (ret && ret[0] >= 0 && ret[1] < n && ret[0] <= ret[1]){ wl = ret[0]; wr = ret[1]; sum = v.sum; }
+  } else if (w){
+    if (w.L != null && w.R != null){ wl = Math.max(0, Math.min(n-1, Math.min(w.L, w.R))); wr = Math.max(0, Math.min(n-1, Math.max(w.L, w.R))); }
+    sum = w.sum != null ? w.sum : null;
+  }
+  const over = sum != null && sum > L.limit;
+
+  // gauge
+  const gx = g.ox, gw = n*b + g.gap*(n-1), gy = 4, gh = 22;
+  ctx.fillStyle = COL.floor; rr(gx, gy, gw, gh, 5); ctx.fill();
+  if (sum != null){
+    const frac = Math.max(0, Math.min(1.25, sum / L.limit)) / 1.25;
+    ctx.fillStyle = over ? COL.bad : COL.visited; rr(gx, gy, Math.max(4, gw*frac), gh, 5); ctx.fill();
+  }
+  const lx = gx + gw / 1.25;
+  ctx.strokeStyle = COL.ink; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(lx, gy - 2); ctx.lineTo(lx, gy + gh + 2); ctx.stroke();
+  ctx.font = "600 13px Barlow, system-ui, sans-serif"; ctx.textBaseline = "middle";
+  ctx.fillStyle = COL.ink; ctx.textAlign = "left";
+  ctx.fillText(sum != null ? (final ? "Returned stretch " : "Window load ") + sum + " of " + L.limit : "Limit " + L.limit, gx + 8, gy + gh/2 + 1);
+  ctx.textAlign = "right"; ctx.fillStyle = COL.muted;
+  if (!over) ctx.fillText("over", gx + gw - 6, gy + gh/2 + 1);
+
+  // window band behind the boxes
+  if (wl != null){
+    const x0 = bx(wl) - 3, x1 = bx(wr) + b + 3, y0 = g.boxTop - 6, y1 = g.baseY + 6;
+    ctx.fillStyle = (final ? (v.status === "fail" ? COL.bad : COL.target) : (over ? COL.bad : COL.visited));
+    ctx.globalAlpha = final ? .22 : (over ? .25 : .7); rr(x0, y0, x1 - x0, y1 - y0, 6); ctx.fill(); ctx.globalAlpha = 1;
+    ctx.strokeStyle = final ? (v.status === "fail" ? COL.bad : COL.target) : COL.frontier; ctx.lineWidth = 3;
+    const tick = 8;
+    ctx.beginPath();
+    ctx.moveTo(x0 + tick, y0); ctx.lineTo(x0, y0); ctx.lineTo(x0, y1); ctx.lineTo(x0 + tick, y1);
+    ctx.moveTo(x1 - tick, y0); ctx.lineTo(x1, y0); ctx.lineTo(x1, y1); ctx.lineTo(x1 - tick, y1);
+    ctx.stroke();
+  }
+
+  // belt
+  const beltY = g.baseY + 2;
+  ctx.fillStyle = COL.belt; rr(g.ox - 6, beltY, gw + 12, 10, 5); ctx.fill();
+  ctx.fillStyle = COL.roller;
+  for (let x = g.ox; x <= g.ox + gw; x += Math.max(14, b/2)){ ctx.beginPath(); ctx.arc(x, beltY + 5, 2, 0, Math.PI*2); ctx.fill(); }
+
+  // boxes
+  for (let i = 0; i < n; i++){
+    const wt = L.weights[i], h = bh(wt), x = bx(i);
+    let lift = 0, shake = 0;
+    if (final && wl != null && i >= wl && i <= wr){
+      const e = reduceMotion() ? 1 : (1 - Math.pow(1 - u, 3));
+      lift = (v.status === "fail" ? Math.sin(u*Math.PI) * .18 : .22) * b * e;
+      if (v.status === "fail" && u > .3) shake = Math.sin(u*50) * 2 * (1-u);
+    }
+    const y = g.baseY - h - lift;
+    ctx.fillStyle = COL.box; rr(x + shake, y, b, h, 3); ctx.fill();
+    ctx.strokeStyle = COL["box-edge"]; ctx.lineWidth = 1.5; rr(x + shake + .75, y + .75, b - 1.5, h - 1.5, 3); ctx.stroke();
+    ctx.fillStyle = COL["box-edge"]; ctx.fillRect(x + shake + b/2 - Math.max(2, b*.08)/2, y, Math.max(2, b*.08), Math.min(h*.35, 12));
+    ctx.fillStyle = COL["box-ink"]; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.font = "700 " + Math.max(11, Math.min(18, Math.round(b*.38))) + "px 'Barlow Condensed', system-ui, sans-serif";
+    ctx.fillText(String(wt), x + shake + b/2, y + h*.62);
+    if (final && wl != null && i >= wl && i <= wr){
+      ctx.strokeStyle = v.status === "fail" ? COL.bad : COL.target; ctx.lineWidth = 2.5; rr(x + shake - 1, y - 1, b + 2, h + 2, 4); ctx.stroke();
+    }
+    if (cur && cur.i === i){
+      ctx.strokeStyle = COL.flash; ctx.lineWidth = 3.5; rr(x - 2.5, y - 2.5, b + 5, h + 5, 5); ctx.stroke();
+    }
+  }
+
+  // index labels + read dots
+  ctx.font = "500 11px Barlow, system-ui, sans-serif"; ctx.fillStyle = COL.muted; ctx.textAlign = "center"; ctx.textBaseline = "top";
+  const iy = beltY + 15;
+  for (let i = 0; i < n; i++){
+    const cx = bx(i) + b/2;
+    ctx.fillStyle = COL.muted; ctx.fillText(String(i), cx, iy);
+    const k = reads[i]; if (!k) continue;
+    const per = Math.max(1, Math.floor((b - 2) / 7)), rows = 4, cap = per * rows;
+    ctx.fillStyle = COL.ink;
+    for (let d = 0; d < Math.min(k, cap); d++){
+      const col = d % per, row = Math.floor(d / per);
+      const dx = cx - (per - 1) * 3.5 + col * 7, dy = iy + 20 + row * 7;
+      ctx.beginPath(); ctx.arc(dx, dy, 2.4, 0, Math.PI*2); ctx.fill();
+    }
+    if (k > cap){ ctx.fillStyle = COL.bad; ctx.font = "700 11px Barlow, system-ui, sans-serif"; ctx.fillText("+" + (k - cap), cx, iy + 20 + rows*7); ctx.font = "500 11px Barlow, system-ui, sans-serif"; }
+  }
+
+  // pointers
+  if (!final && w){
+    const py = g.H - 24;
+    const marks = [];
+    if (w.L != null && w.L >= 0 && w.L < n) marks.push([w.L, "L"]);
+    if (w.R != null && w.R >= 0 && w.R < n) marks.push([w.R, "R"]);
+    marks.forEach(([i, lab], m) => {
+      const same2 = marks.length === 2 && marks[0][0] === marks[1][0];
+      const cx = bx(i) + b/2 + (same2 ? (m ? 9 : -9) : 0);
+      ctx.fillStyle = COL.frontier; ctx.beginPath(); ctx.moveTo(cx, py - 9); ctx.lineTo(cx - 7, py + 1); ctx.lineTo(cx + 7, py + 1); ctx.closePath(); ctx.fill();
+      ctx.font = "700 13px Barlow, system-ui, sans-serif"; ctx.textBaseline = "top"; ctx.fillText(lab, cx, py + 4);
+    });
+  }
+  // reference window when the answer was short or wrong
+  if (final && t >= run.T && v.status !== "pass" && v.ref.at && !(ret && v.ref.best === (ret[1]-ret[0]+1) && v.status === "long")){
+    const [a, c] = v.ref.at, py = g.H - 16, x0 = bx(a), x1 = bx(c) + b;
+    ctx.setLineDash([6, 5]); ctx.strokeStyle = COL.target; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(x0, py - 8); ctx.lineTo(x0, py); ctx.lineTo(x1, py); ctx.lineTo(x1, py - 8); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = COL.target; ctx.font = "600 12px Barlow, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+    ctx.fillText("a longest stretch", (x0 + x1)/2, py + 2);
+  }
+}
+
+
+
+const minutesAt = (L, k) => L.orders.reduce((a, p) => a + Math.ceil(p / k), 0);
+function refSpeed(L){
+  let lo = 1, hi = Math.max(...L.orders), probes = 0;
+  while (lo < hi){ const mid = (lo + hi) >> 1; probes++; if (minutesAt(L, mid) <= L.minutes) hi = mid; else lo = mid + 1; }
+  return {k: lo, probes: probes + 1};
+}
+function judgeSpeed(L, k){
+  const ref = refSpeed(L), res = {ref};
+  if (k < 1) return Object.assign(res, {status:"fail", title:"Robot can’t move", text:"Speed " + k + " isn’t possible. The robot needs a speed of at least 1."});
+  const need = minutesAt(L, k); res.need = need;
+  if (need > L.minutes) return Object.assign(res, {status:"fail", title:"Shift runs over", text:"At speed " + k + " the robot needs " + need + " minutes, but the shift is " + L.minutes + "."});
+  if (k > ref.k) return Object.assign(res, {status:"fail", title:"Finishes, but not the slowest", text:"Speed " + k + " finishes in " + need + " minutes, but speed " + ref.k + " also finishes. Look for the smallest speed that works."});
+  return Object.assign(res, {status:"pass", title:"Slowest safe speed found", text:"Speed " + k + " finishes in " + need + " of " + L.minutes + " minutes" + (k > 1 ? ", and speed " + (k - 1) + " would run over." : ".")});
+}
+function resolveSpeed(w){
+  if (!w) return {};
+  const [, lo] = PICK(w, ["lo", "low", "left", "l"]);
+  const [, hi] = PICK(w, ["hi", "high", "right", "r"]);
+  const [, mid] = PICK(w, ["mid", "m", "k", "speed", "guess"]);
+  return {lo, hi, mid};
+}
+let speedGeo = null;
+function sizeSpeed(w){
+    const n = level.orders.length, pad = 8, gap = 6;
+    const W = Math.max(300, Math.min(w, 560));
+    const b = Math.max(22, Math.floor(Math.min(64, (W - 2*pad - gap*(n-1)) / n)));
+    const rowW = n*b + gap*(n-1);
+    const ox = Math.floor((W - rowW) / 2);
+    const lineY = 62, barTop = 148, barH = 104;
+    speedGeo = {n, b, gap, ox, W, pad, lineY, barTop, barH, H: barTop + barH + 66, rowW};
+    return [W, speedGeo.H];
+  }
+
+function drawSpeed(){
+  if (!speedGeo) return;
+  const g = speedGeo, L = level, n = L.orders.length, maxK = Math.max(...L.orders, 1);
+  ctx.clearRect(0, 0, g.W, g.H);
+  let idx = -1, reads = new Uint16Array(n), w = null, cur = null;
+  if (run){
+    idx = (t >= run.E ? run.E : Math.floor(t)) - 1;
+    for (let i = 0; i <= idx; i++){ const e = run.events[i]; if (e.i >= 0 && e.i < n) reads[e.i]++; }
+    if (idx >= 0){ w = run.wAt[idx]; if (t < run.E) cur = run.events[idx]; }
+  }
+  const final = run && run.hasRet && t >= run.E;
+  const v = run && run.verdict;
+  const showK = final ? (Number.isInteger(run.ret) ? run.ret : null) : (w && Number.isInteger(w.mid) && w.mid >= 1 ? w.mid : null);
+
+  // speed gauge
+  const x0 = g.pad + 10, x1 = g.W - g.pad - 10, ly = g.lineY;
+  const kx = k => x0 + (Math.max(1, Math.min(maxK, k)) - 1) / Math.max(1, maxK - 1) * (x1 - x0);
+  ctx.font = "600 13px Barlow, system-ui, sans-serif"; ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = COL.ink; ctx.textAlign = "left"; ctx.fillText("Speed", x0 - 10, 16);
+  ctx.textAlign = "right"; ctx.fillStyle = COL.muted; ctx.fillText("packages per minute", x1 + 10, 16);
+  // range band
+  if (!final && w && w.lo != null && w.hi != null){
+    const a = kx(Math.min(w.lo, w.hi)), b2 = kx(Math.max(w.lo, w.hi));
+    ctx.fillStyle = COL.visited; ctx.globalAlpha = .75; rr(a - 6, ly - 14, Math.max(12, b2 - a + 12), 28, 8); ctx.fill(); ctx.globalAlpha = 1;
+    ctx.strokeStyle = COL.frontier; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(a - 6 + 6, ly - 14); ctx.lineTo(a - 6, ly - 14); ctx.lineTo(a - 6, ly + 14); ctx.lineTo(a, ly + 14);
+    ctx.moveTo(b2 + 6 - 6, ly - 14); ctx.lineTo(b2 + 6, ly - 14); ctx.lineTo(b2 + 6, ly + 14); ctx.lineTo(b2, ly + 14); ctx.stroke();
+    ctx.fillStyle = COL.frontier; ctx.font = "700 12px Barlow, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+    ctx.fillText("lo " + w.lo, a, ly + 18); if (Math.abs(b2 - a) > 30 || w.lo !== w.hi) ctx.fillText("hi " + w.hi, b2, ly + 18 + (Math.abs(b2 - a) < 34 ? 13 : 0));
+  }
+  ctx.strokeStyle = COL.ink; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x0, ly); ctx.lineTo(x1, ly); ctx.stroke();
+  const step = maxK <= 12 ? 1 : maxK <= 30 ? 5 : 10;
+  ctx.font = "500 11px Barlow, system-ui, sans-serif"; ctx.fillStyle = COL.muted; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+  for (let k = 1; k <= maxK; k++){
+    const major = k === 1 || k === maxK || k % step === 0;
+    ctx.strokeStyle = COL.muted; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(kx(k), ly - (major ? 6 : 3)); ctx.lineTo(kx(k), ly); ctx.stroke();
+    if (major && !(k !== maxK && maxK - k < step * .6)) ctx.fillText(String(k), kx(k), ly - 8);
+  }
+  // tested speeds so far
+  if (run){
+    const seen = new Map();
+    const upto = final ? run.E - 1 : idx;
+    for (let i = 0; i <= upto; i++){ const m = run.probeAt[i]; if (m != null && Number.isInteger(m) && m >= 1 && m <= maxK) seen.set(m, true); }
+    seen.forEach((_, k) => {
+      ctx.fillStyle = minutesAt(L, k) <= L.minutes ? COL.target : COL.bad;
+      ctx.beginPath(); ctx.arc(kx(k), ly, 4.5, 0, Math.PI*2); ctx.fill();
+    });
+  }
+  // current / returned speed marker
+  if (showK != null){
+    const X = kx(showK), ok = minutesAt(L, Math.max(1, showK)) <= L.minutes;
+    ctx.fillStyle = final ? (ok && v.status !== "fail" ? COL.target : COL.bad) : COL.flash;
+    ctx.beginPath(); ctx.moveTo(X, ly - 5); ctx.lineTo(X - 8, ly - 19); ctx.lineTo(X + 8, ly - 19); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(X, ly, 7, 0, Math.PI*2); ctx.stroke();
+  }
+
+  // aisles
+  const bx = i => g.ox + i*(g.b + g.gap);
+  const k = showK != null ? Math.max(1, showK) : null;
+  const need = k != null ? minutesAt(L, k) : null;
+  // minutes gauge
+  const gy = 106, gh = 22, gx = g.ox, gw = g.rowW;
+  ctx.fillStyle = COL.floor; rr(gx, gy, gw, gh, 5); ctx.fill();
+  const maxMin = Math.max(L.minutes * 1.25, 1);
+  if (need != null){
+    const over = need > L.minutes;
+    ctx.fillStyle = over ? COL.bad : COL.visited; rr(gx, gy, Math.max(4, gw * Math.min(1, need / maxMin)), gh, 5); ctx.fill();
+  }
+  const lx = gx + gw * (L.minutes / maxMin);
+  ctx.strokeStyle = COL.ink; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(lx, gy - 2); ctx.lineTo(lx, gy + gh + 2); ctx.stroke();
+  ctx.font = "600 13px Barlow, system-ui, sans-serif"; ctx.textBaseline = "middle"; ctx.textAlign = "left"; ctx.fillStyle = COL.ink;
+  ctx.fillText(need != null ? "At speed " + k + ": " + need + " of " + L.minutes + " min" : "Shift: " + L.minutes + " min", gx + 8, gy + gh/2 + 1);
+
+  const maxO = Math.max(...L.orders, 1);
+  for (let i = 0; i < n; i++){
+    const x = bx(i), p = L.orders[i], h = Math.max(10, Math.round(g.barH * p / maxO)), base = g.barTop + g.barH + 8;
+    // shelf upright
+    ctx.fillStyle = COL.rack; rr(x, base - h, g.b, h, 3); ctx.fill();
+    // minute bands: each band is one minute of picking at speed k
+    if (k != null){
+      const mins = Math.ceil(p / k), bandH = h / mins;
+      ctx.strokeStyle = COL.beam; ctx.lineWidth = 2;
+      if (mins <= 40) for (let m = 1; m < mins; m++){ const y = base - m*bandH; ctx.beginPath(); ctx.moveTo(x + 2, y); ctx.lineTo(x + g.b - 2, y); ctx.stroke(); }
+      else { ctx.fillStyle = COL.beam; ctx.globalAlpha = .5; rr(x, base - h, g.b, h, 3); ctx.fill(); ctx.globalAlpha = 1; }
+      ctx.fillStyle = COL.ink; ctx.font = "600 12px Barlow, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText(mins + " min", x + g.b/2, base + 18);
+    }
+    const fs = Math.max(12, Math.min(17, Math.round(g.b*.34))), inside = h >= fs + 8;
+    ctx.fillStyle = inside ? COL.panel : COL.ink; ctx.font = "700 " + fs + "px 'Barlow Condensed', system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = inside ? "top" : "bottom";
+    ctx.fillText(String(p), x + g.b/2, inside ? base - h + 3 : base - h - 3);
+    if (cur && cur.i === i){ ctx.strokeStyle = COL.flash; ctx.lineWidth = 3.5; rr(x - 3, base - h - 3, g.b + 6, h + 6, 5); ctx.stroke(); }
+    ctx.fillStyle = COL.muted; ctx.font = "500 11px Barlow, system-ui, sans-serif"; ctx.textBaseline = "top"; ctx.fillText("aisle " + i, x + g.b/2, base + 3);
+    // reads as a count
+    if (reads[i]){ ctx.fillStyle = COL.muted; ctx.fillText(reads[i] + (reads[i] === 1 ? " read" : " reads"), x + g.b/2, base + 34); }
+  }
+  ctx.fillStyle = COL.belt; ctx.fillRect(g.ox - 6, g.barTop + g.barH + 8, g.rowW + 12, 3);
+}
+
+
+/* =====================================================================
+   Generic views: arrays, intervals, task graphs, trees
+   ===================================================================== */
+function chipText(v){
+  if (v === null || v === undefined) return "None";
+  if (typeof v === "boolean") return v ? "True" : "False";
+  if (typeof v === "number") return String(Math.round(v * 100) / 100);
+  if (typeof v === "string") return v === "inf" ? "∞" : v;
+  if (Array.isArray(v)) return "(" + v.map(chipText).join(", ") + ")";
+  if (v.n !== undefined) return "node " + (treeVals[v.n] !== undefined ? treeVals[v.n] : v.n);
+  if (v.__d) return "{…}";
+  if (v.__s) return "{…}";
+  return "?";
+}
+let treeVals = [];
+function watchItems(v){
+  if (v && v.__d) return v.__d.map(([k, x]) => chipText(k) + "→" + chipText(x));
+  if (v && v.__s) return v.__s.map(chipText);
+  if (Array.isArray(v)) return v.map(chipText);
+  return null;
+}
+// Draws rows of watched variables. Returns nothing; uses up to `rows` rows of 28px.
+function drawWatch(x, y, w, watch, names, rows){
+  ctx.textBaseline = "middle";
+  let row = 0;
+  for (const name of names){
+    if (row >= rows) break;
+    if (!watch || watch[name] === undefined) continue;
+    const v = watch[name], cy = y + row*30 + 13;
+    ctx.font = "600 12px Barlow, system-ui, sans-serif"; ctx.fillStyle = COL.muted; ctx.textAlign = "left";
+    ctx.fillText(name, x, cy);
+    let cx = x + 64;
+    const items = watchItems(v);
+    ctx.font = "500 12px 'JetBrains Mono', ui-monospace, monospace";
+    if (items === null){
+      ctx.fillStyle = COL.ink; ctx.font = "600 13px 'JetBrains Mono', ui-monospace, monospace"; ctx.fillText(chipText(v), cx, cy);
+    } else if (!items.length){
+      ctx.fillStyle = COL.muted; ctx.fillText("empty", cx, cy);
+    } else {
+      for (let i = 0; i < items.length; i++){
+        const txt = items[i], tw = ctx.measureText(txt).width + 12;
+        if (cx + tw > x + w - 34 && i < items.length){
+          ctx.fillStyle = COL.muted; ctx.fillText("+" + (items.length - i), cx + 2, cy); break;
+        }
+        ctx.fillStyle = COL.floor; rr(cx, cy - 10, tw, 20, 5); ctx.fill();
+        ctx.fillStyle = COL.ink; ctx.fillText(txt, cx + 6, cy + 1);
+        cx += tw + 4;
+      }
+    }
+    row++;
+  }
+}
+function resultLine(x, y, w){
+  if (!run || !run.hasRet || t < run.E) return;
+  const v = run.verdict;
+  ctx.font = "600 14px Barlow, system-ui, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  ctx.fillStyle = v.status === "pass" ? COL.target : v.status === "long" ? COL.ink : COL.bad;
+  let s = "Returned " + (P.showRet ? P.showRet(run.ret) : chipText(run.ret));
+  while (ctx.measureText(s).width > w && s.length > 10) s = s.slice(0, -2);
+  ctx.fillText(s, x, y);
+}
+function liveIndex(){
+  if (!run) return -1;
+  return (t >= run.E ? run.E : Math.floor(t)) - 1;
+}
+
+/* ---------- array view ---------- */
+let arrGeo = null;
+function sizeArray(w){
+  const vals = P.arrayOf(level), n = vals.length, pad = 6, gap = 4;
+  const W = Math.max(300, Math.min(w, 600));
+  const b = Math.max(18, Math.floor(Math.min(52, (W - 2*pad - gap*(n-1)) / Math.max(1, n))));
+  const rowW = n*b + gap*(n-1), ox = Math.floor((W - rowW) / 2);
+  const rows = 3, y0 = 26;
+  arrGeo = {n, b, gap, ox, W, y0, rows, panelY: y0 + b + 74, rowW};
+  arrGeo.H = arrGeo.panelY + rows*30 + 30;
+  return [W, arrGeo.H];
+}
+function drawArray(){
+  if (!arrGeo) return;
+  const g = arrGeo, vals = P.arrayOf(level), n = vals.length, b = g.b;
+  ctx.clearRect(0, 0, g.W, g.H);
+  const idx = liveIndex();
+  const reads = new Uint16Array(n); let cur = null, w = null;
+  if (run){
+    for (let i = 0; i <= idx; i++){ const e = run.events[i]; if (e.a === P.arrArg && e.i >= 0 && e.i < n) reads[e.i]++; }
+    if (idx >= 0){ w = run.wAt[idx]; if (t < run.E) cur = run.events[idx]; }
+  }
+  const final = run && run.hasRet && t >= run.E;
+  const bx = i => g.ox + i*(b + g.gap);
+  ctx.font = "600 12px Barlow, system-ui, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.fillStyle = COL.muted;
+  ctx.fillText(P.arrLabel2 || "input", g.ox, 10);
+  if (P.extraLabel){ ctx.textAlign = "right"; ctx.fillStyle = COL.ink; ctx.fillText(P.extraLabel(level), g.ox + g.rowW, 10); }
+  // marked indices (e.g. a stack of indices)
+  const marked = new Set();
+  if (w && P.markLists) for (const nm of P.markLists){ const v = w[nm]; const items = Array.isArray(v) ? v : (v && v.__s) ? v.__s : null; if (items) items.forEach(x => { if (typeof x === "number" && x >= 0 && x < n) marked.add(x); }); }
+  const hi = final && P.highlight ? P.highlight(run.ret, level) : null;
+  for (let i = 0; i < n; i++){
+    const x = bx(i), y = g.y0;
+    ctx.fillStyle = COL.box; rr(x, y, b, b, 4); ctx.fill();
+    ctx.strokeStyle = COL["box-edge"]; ctx.lineWidth = 1.5; rr(x + .75, y + .75, b - 1.5, b - 1.5, 4); ctx.stroke();
+    if (marked.has(i) && !final){ ctx.strokeStyle = COL.frontier; ctx.lineWidth = 3; rr(x - 1.5, y - 1.5, b + 3, b + 3, 5); ctx.stroke(); }
+    if (hi && hi.has(i)){ ctx.strokeStyle = run.verdict.status === "fail" ? COL.bad : COL.target; ctx.lineWidth = 3; rr(x - 2, y - 2, b + 4, b + 4, 6); ctx.stroke(); }
+    if (cur && cur.a === P.arrArg && cur.i === i){ ctx.strokeStyle = COL.flash; ctx.lineWidth = 3.5; rr(x - 3, y - 3, b + 6, b + 6, 6); ctx.stroke(); }
+    const txt = Array.isArray(vals[i]) ? vals[i].join("–") : String(vals[i]);
+    let fs = Math.max(10, Math.min(18, Math.round(b * .4)));
+    ctx.font = "700 " + fs + "px 'Barlow Condensed', system-ui, sans-serif";
+    while (ctx.measureText(txt).width > b - 4 && fs > 9){ fs--; ctx.font = "700 " + fs + "px 'Barlow Condensed', system-ui, sans-serif"; }
+    ctx.fillStyle = COL["box-ink"]; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(txt, x + b/2, y + b/2 + 1);
+    ctx.font = "500 11px Barlow, system-ui, sans-serif"; ctx.fillStyle = COL.muted; ctx.textBaseline = "top";
+    ctx.fillText(String(i), x + b/2, y + b + 4);
+    const k = reads[i];
+    if (k){
+      const per = Math.max(1, Math.floor((b - 2) / 7)), cap = per * 2;
+      ctx.fillStyle = COL.ink;
+      for (let d = 0; d < Math.min(k, cap); d++){ ctx.beginPath(); ctx.arc(x + b/2 - (per - 1)*3.5 + (d % per)*7, y + b + 22 + Math.floor(d / per)*7, 2.3, 0, Math.PI*2); ctx.fill(); }
+      if (k > cap){ ctx.fillStyle = COL.bad; ctx.font = "700 11px Barlow, system-ui, sans-serif"; ctx.fillText("+" + (k - cap), x + b/2, y + b + 34); }
+    }
+  }
+  // pointers
+  if (w && !final){
+    const py = g.y0 + b + 52, used = {};
+    for (const nm of (P.pointers || [])){
+      const v = w[nm]; if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v >= n) continue;
+      const k = used[v] = (used[v] || 0) + 1;
+      const cx = bx(v) + b/2 + (k - 1) * 14 - (k > 1 ? 7 : 0);
+      ctx.fillStyle = COL.frontier; ctx.beginPath(); ctx.moveTo(cx, py - 8); ctx.lineTo(cx - 6, py); ctx.lineTo(cx + 6, py); ctx.closePath(); ctx.fill();
+      ctx.font = "700 12px Barlow, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillText(nm, cx, py + 2);
+    }
+  }
+  drawWatch(g.ox, g.panelY, Math.max(g.rowW, 280), w, P.panel || [], g.rows);
+  resultLine(g.ox, g.H - 14, g.W - 2*g.ox);
+}
+
+/* ---------- intervals view ---------- */
+let ivGeo = null;
+function sizeIntervals(w){
+  const tr = level.trucks, n = tr.length;
+  const W = Math.max(300, Math.min(w, 600)), pad = 10;
+  const rowH = Math.max(16, Math.min(26, Math.floor(220 / Math.max(1, n))));
+  const axisY = 30, top = 44;
+  ivGeo = {W, pad, rowH, axisY, top, n, panelY: top + n*rowH + 16, rows: 3};
+  ivGeo.H = ivGeo.panelY + ivGeo.rows*30 + 30;
+  return [W, ivGeo.H];
+}
+function drawIntervals(){
+  if (!ivGeo) return;
+  const g = ivGeo, tr = level.trucks, n = tr.length;
+  ctx.clearRect(0, 0, g.W, g.H);
+  const maxT = Math.max(...tr.map(x => x[1]), 1), x0 = g.pad + 34, x1 = g.W - g.pad - 6;
+  const tx = v => x0 + v / maxT * (x1 - x0);
+  const idx = liveIndex(); let cur = null, w = null; const reads = new Uint16Array(n);
+  if (run){
+    for (let i = 0; i <= idx; i++){ const e = run.events[i]; if (e.a === 0 && e.i >= 0 && e.i < n) reads[e.i]++; }
+    if (idx >= 0){ w = run.wAt[idx]; if (t < run.E) cur = run.events[idx]; }
+  }
+  // axis
+  ctx.strokeStyle = COL.ink; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x0, g.axisY); ctx.lineTo(x1, g.axisY); ctx.stroke();
+  const step = maxT <= 12 ? 1 : maxT <= 30 ? 5 : 10;
+  ctx.font = "500 11px Barlow, system-ui, sans-serif"; ctx.fillStyle = COL.muted; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+  for (let v = 0; v <= maxT; v += step){ ctx.beginPath(); ctx.moveTo(tx(v), g.axisY - 4); ctx.lineTo(tx(v), g.axisY); ctx.stroke(); ctx.fillText(String(v), tx(v), g.axisY - 6); }
+  ctx.textAlign = "left"; ctx.fillText("time", g.pad, g.axisY - 6);
+  // busy-until markers from a heap of end times
+  if (w && !(run && t >= run.E)) for (const nm of ["heap", "ends", "active", "docks", "rooms", "busy"]){
+    const v = w[nm]; if (!Array.isArray(v)) continue;
+    v.forEach(x => { const val = Array.isArray(x) ? x[0] : x; if (typeof val !== "number") return; const X = tx(Math.max(0, Math.min(maxT, val)));
+      ctx.fillStyle = COL.frontier; ctx.beginPath(); ctx.moveTo(X, g.axisY + 2); ctx.lineTo(X - 5, g.axisY + 10); ctx.lineTo(X + 5, g.axisY + 10); ctx.closePath(); ctx.fill(); });
+    break;
+  }
+  for (let i = 0; i < n; i++){
+    const [a, b2] = tr[i], y = g.top + i*g.rowH;
+    ctx.fillStyle = COL.muted; ctx.font = "500 11px Barlow, system-ui, sans-serif"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    ctx.fillText("#" + i, x0 - 8, y + g.rowH/2);
+    ctx.fillStyle = reads[i] ? COL.visited : COL.box; rr(tx(a), y + 2, Math.max(4, tx(b2) - tx(a)), g.rowH - 4, 4); ctx.fill();
+    ctx.strokeStyle = COL["box-edge"]; ctx.lineWidth = 1; rr(tx(a) + .5, y + 2.5, Math.max(3, tx(b2) - tx(a) - 1), g.rowH - 5, 4); ctx.stroke();
+    if (cur && cur.a === 0 && cur.i === i){ ctx.strokeStyle = COL.flash; ctx.lineWidth = 3; rr(tx(a) - 2, y, Math.max(8, tx(b2) - tx(a) + 4), g.rowH, 5); ctx.stroke(); }
+    if (g.rowH >= 18){ ctx.fillStyle = COL["box-ink"]; ctx.font = "600 11px Barlow, system-ui, sans-serif"; ctx.textAlign = "left"; if (tx(b2) - tx(a) > 34) ctx.fillText(a + "–" + b2, tx(a) + 5, y + g.rowH/2 + 1); }
+  }
+  // final: show the busiest moment
+  if (run && run.hasRet && t >= run.E && run.verdict.peakAt != null){
+    const X = tx(run.verdict.peakAt);
+    ctx.strokeStyle = COL.target; ctx.setLineDash([5, 4]); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(X, g.axisY); ctx.lineTo(X, g.top + n*g.rowH); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = COL.target; ctx.font = "600 12px Barlow, system-ui, sans-serif"; ctx.textAlign = X > g.W/2 ? "right" : "left"; ctx.textBaseline = "top";
+    ctx.fillText("busiest: " + run.verdict.ref + " trucks at time " + run.verdict.peakAt, X + (X > g.W/2 ? -6 : 6), g.top + n*g.rowH + 2);
+  }
+  drawWatch(g.pad, g.panelY + 8, g.W - 2*g.pad, w, P.panel || [], g.rows);
+  resultLine(g.pad, g.H - 14, g.W - 2*g.pad);
+}
+
+/* ---------- task graph view ---------- */
+let graphGeo = null;
+function sizeGraph(w){
+  const W = Math.max(300, Math.min(w, 520)), gh = Math.round(Math.min(W * .72, 330));
+  graphGeo = {W, gh, rows: 3, panelY: gh + 8};
+  graphGeo.H = graphGeo.panelY + graphGeo.rows*30 + 30;
+  return [W, graphGeo.H];
+}
+function graphPos(n){
+  const g = graphGeo, cx = g.W/2, cy = g.gh/2 + 4, R = Math.min(g.W, g.gh)/2 - 30;
+  return Array.from({length:n}, (_, i) => [cx + R*Math.cos(-Math.PI/2 + i*2*Math.PI/n), cy + R*Math.sin(-Math.PI/2 + i*2*Math.PI/n)]);
+}
+function arrow(x1, y1, x2, y2, r){
+  const a = Math.atan2(y2 - y1, x2 - x1), sx = x1 + Math.cos(a)*r, sy = y1 + Math.sin(a)*r, ex = x2 - Math.cos(a)*(r + 2), ey = y2 - Math.sin(a)*(r + 2);
+  ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(ex - 9*Math.cos(a - .4), ey - 9*Math.sin(a - .4)); ctx.lineTo(ex - 9*Math.cos(a + .4), ey - 9*Math.sin(a + .4)); ctx.closePath(); ctx.fill();
+}
+function drawGraph(){
+  if (!graphGeo) return;
+  const g = graphGeo, n = level.n, deps = level.deps, pos = graphPos(n), r = 17;
+  ctx.clearRect(0, 0, g.W, g.H);
+  const idx = liveIndex(); let cur = null, w = null; const reads = new Uint16Array(deps.length);
+  if (run){
+    for (let i = 0; i <= idx; i++){ const e = run.events[i]; if (e.a === 1 && e.i >= 0 && e.i < deps.length) reads[e.i]++; }
+    if (idx >= 0){ w = run.wAt[idx]; if (t < run.E) cur = run.events[idx]; }
+  }
+  const final = run && run.hasRet && t >= run.E;
+  deps.forEach(([a, b], i) => {
+    if (a < 0 || b < 0 || a >= n || b >= n) return;
+    const hot = cur && cur.a === 1 && cur.i === i;
+    ctx.strokeStyle = hot ? COL.flash : reads[i] ? COL.ink : COL.muted; ctx.fillStyle = ctx.strokeStyle;
+    ctx.lineWidth = hot ? 3.5 : reads[i] ? 2 : 1.3; ctx.globalAlpha = hot || reads[i] ? 1 : .6;
+    arrow(pos[a][0], pos[a][1], pos[b][0], pos[b][1], r); ctx.globalAlpha = 1;
+  });
+  const pick = names => { if (!w) return null; for (const nm of names) if (w[nm] !== undefined) return w[nm]; return null; };
+  const listOf = v => Array.isArray(v) ? v : (v && v.__s) ? v.__s : (v && v.__d) ? v.__d.map(x => x[0]) : null;
+  const order = final ? (Array.isArray(run.ret) ? run.ret : []) : (listOf(pick(["order", "res", "result", "ans", "output"])) || []);
+  const queue = final ? [] : (listOf(pick(["queue", "q", "ready", "stack", "frontier"])) || []);
+  let indeg = final ? null : pick(["indeg", "indegree", "in_degree", "indegrees", "deg"]);
+  if (indeg && indeg.__d){ const arr = Array(n).fill(null); indeg.__d.forEach(([k, v]) => { if (typeof k === "number" && k >= 0 && k < n) arr[k] = v; }); indeg = arr; }
+  const ordPos = new Map(); order.forEach((x, i) => { if (typeof x === "number" && !ordPos.has(x)) ordPos.set(x, i); });
+  const inQ = new Set(queue.filter(x => typeof x === "number"));
+  for (let i = 0; i < n; i++){
+    const [x, y] = pos[i];
+    ctx.fillStyle = ordPos.has(i) ? (final && run.verdict.status === "fail" ? COL.bad : COL.visited) : COL.box;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = inQ.has(i) ? COL.frontier : COL["box-edge"]; ctx.lineWidth = inQ.has(i) ? 3.5 : 1.5; ctx.stroke();
+    ctx.fillStyle = COL["box-ink"]; ctx.font = "700 15px 'Barlow Condensed', system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(String(i), x, y + 1);
+    if (ordPos.has(i)){
+      const bx = x + r*.8, by = y - r*.8;
+      ctx.fillStyle = COL.ink; ctx.beginPath(); ctx.arc(bx, by, 9, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = COL.panel; ctx.font = "700 11px Barlow, system-ui, sans-serif"; ctx.fillText(String(ordPos.get(i) + 1), bx, by + .5);
+    }
+    if (Array.isArray(indeg) && typeof indeg[i] === "number"){
+      ctx.fillStyle = COL.frontier; ctx.font = "700 11px Barlow, system-ui, sans-serif"; ctx.fillText("in " + indeg[i], x, y + r + 9);
+    }
+  }
+  drawWatch(10, g.panelY, g.W - 20, w, P.panel || [], g.rows);
+  resultLine(10, g.H - 14, g.W - 20);
+}
+
+/* ---------- tree view ---------- */
+let treeGeo = null;
+function treeLayout(vals){
+  const nodes = [];
+  vals.forEach((v, i) => { if (v !== null) nodes[i] = {id:i, val:v, l:null, r:null, depth:0}; });
+  // rebuild links exactly like the harness does (level order with gaps)
+  const q = []; let i = 1;
+  if (nodes[0]) q.push(nodes[0]);
+  while (q.length && i < vals.length){
+    const cur = q.shift();
+    if (i < vals.length){ if (nodes[i]){ cur.l = nodes[i]; nodes[i].depth = cur.depth + 1; q.push(nodes[i]); } i++; }
+    if (i < vals.length){ if (nodes[i]){ cur.r = nodes[i]; nodes[i].depth = cur.depth + 1; q.push(nodes[i]); } i++; }
+  }
+  let k = 0; const walk = nd => { if (!nd) return; walk(nd.l); nd.ord = k++; walk(nd.r); };
+  walk(nodes[0]);
+  return {nodes: nodes.filter(Boolean), count: k, depth: Math.max(0, ...nodes.filter(Boolean).map(n => n.depth))};
+}
+function sizeTree(w){
+  const lay = treeLayout(level.tree);
+  const W = Math.max(300, Math.min(w, 600)), levH = 54, top = 26;
+  treeGeo = {W, lay, levH, top, th: top + (lay.depth + 1)*levH, rows: 3};
+  treeGeo.panelY = treeGeo.th + 4; treeGeo.H = treeGeo.panelY + treeGeo.rows*30 + 30;
+  return [W, treeGeo.H];
+}
+function drawTree(){
+  if (!treeGeo) return;
+  const g = treeGeo, lay = g.lay, pad = 22;
+  ctx.clearRect(0, 0, g.W, g.H);
+  treeVals = []; lay.nodes.forEach(nd => treeVals[nd.id] = nd.val);
+  const X = nd => pad + (lay.count <= 1 ? (g.W - 2*pad)/2 : nd.ord * (g.W - 2*pad) / (lay.count - 1));
+  const Y = nd => g.top + nd.depth * g.levH + 16;
+  const r = Math.max(13, Math.min(18, (g.W - 2*pad) / Math.max(1, lay.count) / 2 - 1));
+  const idx = liveIndex(); let cur = null, w = null; const touched = new Uint16Array(level.tree.length);
+  if (run){
+    for (let i = 0; i <= idx; i++){ const e = run.events[i]; if (e.k === "node" && e.f === "v") touched[e.n]++; }
+    if (idx >= 0){ w = run.wAt[idx]; if (t < run.E) cur = run.events[idx]; }
+  }
+  const final = run && run.hasRet && t >= run.E;
+  ctx.strokeStyle = COL.muted; ctx.lineWidth = 1.5;
+  lay.nodes.forEach(nd => { [nd.l, nd.r].forEach(ch => { if (!ch) return; ctx.beginPath(); ctx.moveTo(X(nd), Y(nd)); ctx.lineTo(X(ch), Y(ch)); ctx.stroke(); }); });
+  const held = new Set();
+  if (w && !final) for (const nm of ["stack", "queue", "q", "node", "cur", "curr", "prev"]){
+    const v = w[nm]; const items = Array.isArray(v) ? v : (v ? [v] : []);
+    items.forEach(x => { if (x && x.n !== undefined) held.add(x.n); if (Array.isArray(x)) x.forEach(y => { if (y && y.n !== undefined) held.add(y.n); }); });
+  }
+  const bad = final && run.verdict.badNode != null ? run.verdict.badNode : null;
+  lay.nodes.forEach(nd => {
+    const x = X(nd), y = Y(nd);
+    ctx.fillStyle = touched[nd.id] ? COL.visited : COL.box; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = held.has(nd.id) ? COL.frontier : COL["box-edge"]; ctx.lineWidth = held.has(nd.id) ? 3.5 : 1.5; ctx.stroke();
+    if (cur && cur.n === nd.id){ ctx.strokeStyle = COL.flash; ctx.lineWidth = 3.5; ctx.beginPath(); ctx.arc(x, y, r + 4, 0, Math.PI*2); ctx.stroke(); }
+    if (bad === nd.id){ ctx.strokeStyle = COL.bad; ctx.lineWidth = 3.5; ctx.beginPath(); ctx.arc(x, y, r + 5, 0, Math.PI*2); ctx.stroke(); }
+    ctx.fillStyle = COL["box-ink"]; ctx.font = "700 " + Math.round(r*.95) + "px 'Barlow Condensed', system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(String(nd.val), x, y + 1);
+    if (touched[nd.id] > 1){ ctx.fillStyle = COL.bad; ctx.font = "700 10px Barlow, system-ui, sans-serif"; ctx.fillText("×" + touched[nd.id], x + r + 6, y - r + 2); }
+  });
+  if (bad != null && t >= run.T){ ctx.fillStyle = COL.bad; ctx.font = "600 12px Barlow, system-ui, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.fillText("this node breaks the sorting rule", 10, 6); }
+  drawWatch(10, g.panelY, g.W - 20, w, P.panel || [], g.rows);
+  resultLine(10, g.H - 14, g.W - 20);
+}
+
+/* =====================================================================
+   Problems, by tier
+   ===================================================================== */
+function mkRng(seed){ return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const ri = (rng, a, b) => a + Math.floor(rng() * (b - a + 1));
+function parseMap(map, wet){
+  const grid = [], s = [0,0], t = [0,0];
+  map.forEach((row, r) => grid.push([...row].map((ch, c) => {
+    if (ch === "S"){ s[0]=r; s[1]=c; }
+    if (ch === "T"){ t[0]=r; t[1]=c; }
+    if (wet) return ch === "#" ? -1 : ch === "~" ? 5 : 1;
+    return ch === "#" ? 1 : 0;
+  })));
+  return {grid, start:s, target:t};
+}
+const lvl = (id, name, obj) => Object.assign({id, name}, obj);
+const deep = o => JSON.parse(JSON.stringify(o));
+const isIntArr = (x, n) => Array.isArray(x) && (n == null || x.length === n) && x.every(v => typeof v === "number" && Number.isInteger(v));
+const pyRepr = v => v === null ? "None" : v === true ? "True" : v === false ? "False" : Array.isArray(v) ? "[" + v.map(pyRepr).join(", ") + "]" : typeof v === "object" ? "a " + (v.__t || "value") : String(v);
+const bad = (title, text) => ({status:"fail", title, text});
+const ok = (title, text, extra) => Object.assign({status:"pass", title, text}, extra || {});
+
+/* ---------- shared grid problem pieces ---------- */
+function checkPath(L, ret, wet){
+  if (!Array.isArray(ret)) return bad("Check the return value", "solve() returned " + pyRepr(ret) + ". Return the path as a list of (row, col) cells, or [] if the target can’t be reached.");
+  for (let i = 0; i < ret.length; i++) if (!isIntArr(ret[i], 2)) return bad("Check the return value", "Item " + i + " of the path is " + pyRepr(ret[i]) + ". Each step should be a (row, col) pair.");
+  return judgeGrid(L, ret, wet);
+}
+const GRID_BASE = {
+  view: "grid", input: "grid", editor: "grid", levelNoun: "floors",
+  isShelf: isShelf1, vals: {open: 0, shelf: 1}, robot: true, path: true,
+  size(w){
+    const R = level.grid.length, C = level.grid[0].length;
+    const maxH = Math.max(240, window.innerHeight * (window.innerWidth >= 900 ? 0.62 : 0.5));
+    cell = Math.max(16, Math.floor(Math.min(w / C, maxH / R, 54)));
+    return [C * cell, R * cell];
+  },
+  draw(){ drawGrid(); },
+  cellAt(x, y){
+    const c = Math.floor(x / cell), r = Math.floor(y / cell);
+    if (r < 0 || c < 0 || r >= level.grid.length || c >= level.grid[0].length) return null;
+    return [r, c];
+  },
+  case(L){ return {grid: L.grid, start: L.start, target: L.target}; },
+  finalTicks(run){ return this.path ? run.verdict.valid + (run.verdict.bad ? 1 : 0) : 1; },
+  finalRate(sp){ return this.path ? Math.max(4, Math.min(sp, 14)) : 1.4; },
+  tip(run){
+    const m = [];
+    if (!run.vAt.some(Boolean)) m.push("visited");
+    if (this.path && !run.qAt.some(Boolean)) m.push(this.wet ? "heap" : "queue");
+    return m;
+  }
+};
+
+/* ---------- L1: shortest path (BFS) ---------- */
+const GRID_MAPS = [
+  ["starter", "Starter aisle", ["S..#....",".#.#.##.",".#...#..",".####.#.","......#T",".##.#..."]],
+  ["racks", "Rack rows", ["S...........",".##.##.##.#.",".##.##.##.#.","............",".##.##.##.#.",".##.##.##.#.","............",".##.##.##.#.",".##.##.##.#.","...........T"]],
+  ["open", "Open floor", ["..........","..........","..........","..S.......","..........","..........","........T.",".........."]],
+  ["snake", "The long way round", ["S.........#","#########.#","...........",".##########","...........","##########.","...........",".##########","..........T"]],
+  ["walled", "No way through", ["S...#....",".##.#.##.","....#..#.",".##.#.#T.","....#....",".##.#.##.","....#...."]]
+];
+const BfsProblem = Object.assign({}, GRID_BASE, {
+  id: "grid", tier: 1, tab: "Shortest path", pattern: "BFS", fname: "shortest_path.py", codeKey: "aisle.code", customKey: "aisle.customs",
+  title: "Get the robot to the target", sig: "grid, start, target", watch: [],
+  brief: `<p><code>grid[r][c]</code> is <code>0</code> for open floor and <code>1</code> for a shelf. The robot moves up, down, left or right, one cell at a time.</p>
+<p>Write <code>solve(grid, start, target)</code> and return the shortest path as a list of <code>(row, col)</code> cells, including start and target. Return <code>[]</code> if the target can’t be reached.</p>`,
+  show: `Every <code>grid[r][c]</code> read lights up that cell. Name your visited set <code>visited</code> and your queue <code>queue</code> to see them. Queue items like <code>((r, c), path)</code> work too. Then the robot drives the path you returned.`,
+  legend: `<span><i class="sw flash"></i>Reading now</span><span><i class="sw checked"></i>Checked</span><span><i class="sw visited"></i>Visited</span><span><i class="sw queue"></i>In queue</span><span><i class="sw rack"></i>Shelf</span>`,
+  starter: `from collections import deque
+
+
+def solve(grid, start, target):
+    rows, cols = len(grid), len(grid[0])
+    queue = deque([start])
+    visited = {start}
+
+    # Your BFS here.
+    # grid[r][c] == 1 means a shelf.
+    # Return the path as a list of (row, col) cells,
+    # from start to target. Return [] if unreachable.
+
+    return []
+`,
+  levels(){ return GRID_MAPS.map(([id, name, m]) => lvl(id, name, parseMap(m))); },
+  hidden(){
+    const H = [];
+    H.push(lvl("h1", "Target walled off", parseMap(["S.#..",".##..","#..#T","...#."])));
+    const same = parseMap(["...","...","..."]); same.start = [1,1]; same.target = [1,1];
+    H.push(lvl("h2", "Robot already on the target", same));
+    H.push(lvl("h3", "One long corridor", parseMap(["S.........T"])));
+    const big = parseMap(Array.from({length:12}, (_, r) => r === 0 ? "S..........." : r === 11 ? "...........T" : "............"));
+    H.push(lvl("h4", "Big open floor", big));
+    H.push(lvl("h5", "Dead ends everywhere", parseMap(["S.#......","#.#.####.","..#.#..#.",".##.#.##.","....#...T"])));
+    return H;
+  },
+  check(L, ret){ return checkPath(L, ret, false); },
+  budget(L){ return 5 * L.grid.length * L.grid[0].length + 10; }
+});
+
+/* ---------- L1: crate pair (hash map) ---------- */
+const PairProblem = {
+  id: "pair", tier: 1, tab: "Crate pair", pattern: "Hash map", fname: "crate_pair.py", levelNoun: "orders",
+  title: "Fill the crate exactly", sig: "weights, capacity", input: "array", view: "array",
+  brief: `<p>A crate holds exactly <code>capacity</code> kilograms, and it ships with exactly two packages. <code>weights[i]</code> is the weight of package <code>i</code>.</p>
+<p>Write <code>solve(weights, capacity)</code> and return <code>(i, j)</code>, the indices of two different packages whose weights add up to <code>capacity</code>, with <code>i &lt; j</code>. Any valid pair passes. Return <code>None</code> if no pair works.</p>`,
+  show: `Every <code>weights[i]</code> read drops a dot under that package. Name a dict <code>seen</code> to watch it fill up, and loop with <code>i</code> (and <code>j</code>) to see pointers.`,
+  legend: `<span><i class="sw flash"></i>Reading now</span><span><i class="sw dot"></i>One read</span><span><i class="sw okring"></i>Returned pair</span>`,
+  starter: `def solve(weights, capacity):
+    seen = {}  # weight -> index
+
+    # For each package, the partner you need weighs
+    # capacity - weights[i]. Have you already seen it?
+    # Return (i, j) with i < j, or None.
+
+    return None
+`,
+  watch: ["seen", "lookup", "index", "pos", "i", "j", "need", "complement", "diff", "left", "right", "target"],
+  pointers: ["i", "j", "left", "right"], panel: ["seen", "lookup", "index", "pos", "need", "complement", "diff"], arrArg: 0, arrLabel2: "weights",
+  editor: "array", arr: "weights", arrLabel: "Package weights", lim: "capacity", limLabel: "Crate capacity", maxN: 14, maxV: 99,
+  arrayOf: L => L.weights, extraLabel: L => "capacity " + L.capacity,
+  levels(){ return [lvl("p1", "Small order", {weights:[2,7,11,15], capacity:9}), lvl("p2", "Mixed shipment", {weights:[8,3,14,6,9,5,12], capacity:17}), lvl("p3", "Twins", {weights:[4,9,4,1], capacity:8}), lvl("p4", "No match", {weights:[5,1,8,3], capacity:20})]; },
+  hidden(){
+    const rng = mkRng(11), big = Array.from({length:40}, () => ri(rng, 1, 60)); big.push(97, 98);
+    return [lvl("h1", "Two packages only", {weights:[3,3], capacity:6}), lvl("h2", "No pair exists", {weights:[1,2,4,8,16], capacity:7}),
+      lvl("h3", "Pair at the very end", {weights:big, capacity:195}), lvl("h4", "Same weight can’t pair with itself", {weights:[5,1,9], capacity:10}),
+      lvl("h5", "Single package", {weights:[10], capacity:10})];
+  },
+  case(L){ return {args:[L.weights, L.capacity], arr:[0]}; },
+  check(L, ret){
+    const w = L.weights; const has = (() => { const s = new Map(); for (let i = 0; i < w.length; i++){ if (s.has(L.capacity - w[i])) return true; s.set(w[i], i); } return false; })();
+    if (ret === null || (Array.isArray(ret) && !ret.length)) return has ? bad("Missed a pair", "You returned None, but two packages do add up to " + L.capacity + ".") : ok("Correct", "No two packages add up to " + L.capacity + ", so None is right.");
+    if (!isIntArr(ret, 2)) return bad("Check the return value", "solve() returned " + pyRepr(ret) + ". Return a pair of indices (i, j), or None.");
+    let [i, j] = ret;
+    if (i < 0 || j < 0 || i >= w.length || j >= w.length) return bad("Index out of range", "(" + i + ", " + j + ") points past the end of the list.");
+    if (i === j) return bad("Same package twice", "You used package " + i + " twice. The two packages must be different.");
+    if (w[i] + w[j] !== L.capacity) return bad("Doesn’t fill the crate", "Packages " + i + " and " + j + " weigh " + w[i] + " + " + w[j] + " = " + (w[i] + w[j]) + ", not " + L.capacity + ".");
+    if (i > j) return ok("Correct", "Packages " + j + " and " + i + " fill the crate. (Tip: the spec asks for i < j; it’s accepted here.)");
+    return ok("Crate filled", "Packages " + i + " and " + j + " weigh " + w[i] + " + " + w[j] + " = " + L.capacity + ".");
+  },
+  highlight(ret){ return isIntArr(ret, 2) ? new Set(ret) : null; },
+  budget(L){ return 3 * L.weights.length + 4; },
+  tip(run){ return run.wAt.some(w => w && (w.seen || w.lookup || w.index || w.pos)) ? [] : ["seen"]; },
+  random(L){ const n = ri(Math.random, 5, 10); L.weights = Array.from({length:n}, () => ri(Math.random, 1, 30)); const a = ri(Math.random, 0, n-1); let b = ri(Math.random, 0, n-1); if (b === a) b = (a + 1) % n; L.capacity = L.weights[a] + L.weights[b]; }
+};
+
+/* ---------- L1: shelf clusters (flood fill) ---------- */
+const ISLAND_MAPS = [
+  ["i1", "Three clusters", ["##..#...","##..#...","....##..","........","..###...","........"]],
+  ["i2", "Scattered racks", ["#.#.#.#","..#....",".....##","#....##","##.#..."]],
+  ["i3", "One big block", ["......",".####.",".####.",".#..#.",".####.","......"]],
+  ["i4", "Winding rack", ["#####.","....#.","###.#.","#...#.","#####."]]
+];
+const IslandProblem = Object.assign({}, GRID_BASE, {
+  id: "islands", tier: 1, tab: "Shelf clusters", pattern: "Flood fill", fname: "shelf_clusters.py", customKey: "aisle.customs.islands",
+  title: "Count the shelf clusters", sig: "grid", robot: false, path: false, editTools: ["shelf"], watch: ["count", "clusters", "islands", "groups", "total"],
+  brief: `<p>Shelves that touch up, down, left or right belong to the same cluster. Diagonal doesn’t count. <code>grid[r][c]</code> is <code>1</code> for a shelf and <code>0</code> for floor.</p>
+<p>Write <code>solve(grid)</code> and return how many separate clusters there are.</p>`,
+  show: `Every <code>grid[r][c]</code> read lights up that cell. Name your set <code>visited</code> to see each cluster get claimed, and a <code>count</code> variable shows in the header.`,
+  legend: `<span><i class="sw flash"></i>Reading now</span><span><i class="sw checked"></i>Checked</span><span><i class="sw visited"></i>Visited</span><span><i class="sw rack"></i>Shelf</span>`,
+  starter: `def solve(grid):
+    rows, cols = len(grid), len(grid[0])
+    visited = set()
+    count = 0
+
+    # Scan every cell. When you find a shelf you haven't
+    # visited, that's a new cluster: count it, then flood
+    # out (DFS or BFS) to mark the whole cluster visited.
+
+    return count
+`,
+  levels(){ return ISLAND_MAPS.map(([id, name, m]) => lvl(id, name, Object.assign(parseMap(m), {start:[-1,-1], target:[-1,-1]}))); },
+  hidden(){
+    const mk = (id, name, m) => lvl(id, name, Object.assign(parseMap(m), {start:[-1,-1], target:[-1,-1]}));
+    return [mk("h1", "Empty floor", ["....","....","...."]), mk("h2", "Wall to wall", ["###","###"]), mk("h3", "Checkerboard", ["#.#.#.",".#.#.#","#.#.#.",".#.#.#"]),
+      mk("h4", "Diagonals don’t connect", ["#...","..#.",".#..","...#"]), mk("h5", "Single row", ["##.#..###.#"])];
+  },
+  case(L){ return {grid: L.grid}; },
+  ref(L){
+    const G = L.grid, R = G.length, C = G[0].length, seen = new Set(); let n = 0;
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++){
+      if (G[r][c] !== 1 || seen.has(r*C+c)) continue; n++;
+      const st = [[r,c]]; seen.add(r*C+c);
+      while (st.length){ const [a, b] = st.pop(); for (const [dr, dc] of DIRS){ const x = a+dr, y = b+dc; if (x>=0&&y>=0&&x<R&&y<C&&G[x][y]===1&&!seen.has(x*C+y)){ seen.add(x*C+y); st.push([x,y]); } } }
+    }
+    return n;
+  },
+  check(L, ret){
+    const n = this.ref(L);
+    if (typeof ret !== "number" || !Number.isInteger(ret)) return bad("Check the return value", "solve() returned " + pyRepr(ret) + ". Return the number of clusters.");
+    if (ret !== n) return bad("Wrong count", "You counted " + ret + " cluster" + (ret === 1 ? "" : "s") + ", but there " + (n === 1 ? "is 1." : "are " + n + ".") + (ret > n ? " Some clusters were counted more than once." : " Some clusters were merged or missed."));
+    return ok("Clusters counted", "There " + (n === 1 ? "is 1 cluster." : "are " + n + " clusters."));
+  },
+  budget(L){ return 6 * L.grid.length * L.grid[0].length + 10; },
+  phaseExtra(w){ for (const k of ["count", "clusters", "islands", "groups", "total"]) if (w && typeof w[k] === "number") return ", count " + w[k]; return ""; },
+  tip(run){ return run.vAt.some(Boolean) ? [] : ["visited"]; }
+});
+
+/* ---------- L1: heaviest k (heap / sorting) ---------- */
+const TopKProblem = {
+  id: "topk", tier: 1, tab: "Heaviest k", pattern: "Heap", fname: "heaviest_k.py", levelNoun: "loads",
+  title: "Pick the heaviest packages", sig: "weights, k", input: "array", view: "array",
+  brief: `<p>The forklift can take <code>k</code> packages, and it should take the heaviest ones. <code>weights[i]</code> is the weight of package <code>i</code>.</p>
+<p>Write <code>solve(weights, k)</code> and return a list of the <code>k</code> heaviest weights, in any order.</p>`,
+  show: `Every read drops a dot under that package. Name a min-heap <code>heap</code> to watch it hold the best <code>k</code> so far. Scanning for the maximum <code>k</code> times shows up as a pile of dots.`,
+  legend: `<span><i class="sw flash"></i>Reading now</span><span><i class="sw dot"></i>One read</span>`,
+  starter: `import heapq
+
+
+def solve(weights, k):
+    heap = []  # min-heap of the k heaviest so far
+
+    # Push each weight. If the heap grows past k,
+    # pop the smallest. What's left is the answer.
+
+    return heap
+`,
+  watch: ["heap", "h", "top", "result", "res", "best", "i", "w"], pointers: ["i"], panel: ["heap", "h", "top", "result", "res", "best"], arrArg: 0, arrLabel2: "weights",
+  editor: "array", arr: "weights", arrLabel: "Package weights", lim: "k", limLabel: "k", maxN: 14, maxV: 99,
+  arrayOf: L => L.weights, extraLabel: L => "k = " + L.k,
+  levels(){ return [lvl("k1", "Morning load", {weights:[3,9,4,12,7,1,8], k:3}), lvl("k2", "Ties", {weights:[5,5,2,5,1], k:2}), lvl("k3", "Take one", {weights:[6,14,2,9,11], k:1})]; },
+  hidden(){
+    const rng = mkRng(7), big = Array.from({length:60}, () => ri(rng, 1, 500));
+    return [lvl("h1", "Take everything", {weights:[4,1,3], k:3}), lvl("h2", "All the same", {weights:[7,7,7,7], k:2}), lvl("h3", "Long belt, k = 5", {weights:big, k:5}), lvl("h4", "Long belt, k = 12", {weights:big.slice().reverse(), k:12})];
+  },
+  case(L){ return {args:[L.weights, L.k], arr:[0]}; },
+  check(L, ret){
+    if (!Array.isArray(ret) || ret.some(x => typeof x !== "number")) return bad("Check the return value", "solve() returned " + pyRepr(ret) + ". Return a list of the k heaviest weights.");
+    const want = L.weights.slice().sort((a, b) => b - a).slice(0, L.k), got = ret.slice().sort((a, b) => b - a);
+    if (got.length !== want.length) return bad("Wrong number of packages", "You returned " + got.length + " weights, but k is " + L.k + ".");
+    for (let i = 0; i < want.length; i++) if (got[i] !== want[i]) return bad("Not the heaviest", "Expected the weights " + pyRepr(want) + " (in any order), but got " + pyRepr(ret) + ".");
+    return ok("Heaviest picked", want.length <= 12 ? "The forklift took " + pyRepr(want) + "." : "The forklift took the right " + want.length + " packages.");
+  },
+  budget(L){ return 2 * L.weights.length + 4; },
+  highlight(ret, L){ if (!Array.isArray(ret)) return null; const need = ret.slice(); const s = new Set(); L.weights.forEach((w, i) => { const j = need.indexOf(w); if (j >= 0){ s.add(i); need.splice(j, 1); } }); return s; },
+  tip(run){ return run.wAt.some(w => w && (w.heap || w.h)) ? [] : ["heap"]; },
+  random(L){ const n = ri(Math.random, 6, 12); L.weights = Array.from({length:n}, () => ri(Math.random, 1, 40)); L.k = ri(Math.random, 1, Math.min(5, n)); }
+};
+
+/* ---------- L2: conveyor belt (sliding window) ---------- */
+const BELT_MAX = 14;
+const BeltProblem = {
+  id: "belt", tier: 2, tab: "Conveyor belt", pattern: "Sliding window", fname: "conveyor_belt.py", levelNoun: "belts",
+  title: "Load the longest stretch", sig: "weights, limit", input: "array", view: "belt",
+  brief: `<p>Packages roll down the belt in order. <code>weights[i]</code> is the weight of package <code>i</code>, always a positive whole number. The truck takes one unbroken stretch of packages, as long as their total weight is at most <code>limit</code>.</p>
+<p>Write <code>solve(weights, limit)</code> and return <code>(start, end)</code>, the first and last index of the longest stretch that fits. Return <code>None</code> if no single package fits.</p>`,
+  show: `Every read drops a dot under that package. Name your pointers <code>left</code> and <code>right</code> and your running sum <code>total</code> to see the window move.`,
+  legend: `<span><i class="sw flash"></i>Reading now</span><span><i class="sw visited"></i>Window</span><span><i class="sw over"></i>Over the limit</span><span><i class="sw dot"></i>One read</span>`,
+  starter: `def solve(weights, limit):
+    left = 0
+    total = 0
+    best = None
+
+    # Grow the window on the right; shrink it from the
+    # left whenever total goes over the limit.
+    # Return (start, end) of the longest stretch, or None.
+
+    return best
+`,
+  watch: ["left","l","start","lo","right","r","end","hi","i","j","total","window_sum","window","curr","cur","current","load","s","acc","running","best","best_len","max_len","longest","ans","res","result"],
+  editor: "array", arr: "weights", arrLabel: "Package weights", lim: "limit", limLabel: "Limit", maxN: BELT_MAX, maxV: 99,
+  levels(){ return [lvl("morning", "Morning shift", {weights:[3,1,2,7,4,2,1,1,5], limit:8}), lvl("heavy", "Heavy pallets", {weights:[9,8,2,1,9,3,3,1,1,2,8,9], limit:10}), lvl("long", "Full belt", {weights:[4,2,6,1,1,3,8,2,2,1,5,3,9,1], limit:12}), lvl("light", "Light load", {weights:[1,2,1,1,2,1,1,2], limit:20}), lvl("none", "Nothing fits", {weights:[12,15,11,14,13], limit:10})]; },
+  hidden(){
+    const rng = mkRng(5), big = Array.from({length:60}, () => ri(rng, 1, 9));
+    return [lvl("h1", "One package that fits", {weights:[4], limit:4}), lvl("h2", "Every package too heavy", {weights:[9,9,9], limit:8}), lvl("h3", "Whole belt fits", {weights:[1,1,1,1,1], limit:5}), lvl("h4", "Long belt", {weights:big, limit:20}), lvl("h5", "Best stretch at the end", {weights:[9,9,1,1,1,1], limit:4})];
+  },
+  case(L){ return {args:[L.weights, L.limit], arr:[0]}; },
+  check(L, ret){
+    if (Array.isArray(ret) && !ret.length) ret = null;
+    if (ret !== null && !isIntArr(ret, 2)) return bad("Check the return value", "solve() returned " + pyRepr(ret) + ". Return a (start, end) pair of indices, or None.");
+    return judgeBelt(L, ret);
+  },
+  budget(L){ return 3 * L.weights.length + 2; },
+  prep(run){ run.wAt = run.wAt.map(resolveWatch); },
+  size(w){ return sizeBelt(w); }, draw(){ drawBelt(); },
+  finalTicks(){ return 1; }, finalRate(){ return 1.4; },
+  phase(){
+    if (!run.hasRet && t >= run.T) return ["Stopped", run.E + " belt reads"];
+    if (t < run.E || !run.hasRet){ const idx = Math.min(run.E, Math.max(1, Math.ceil(t))) - 1; const w = run.wAt[idx]; return ["Scanning", "Read " + (idx + 1) + " of " + run.E + (w && w.best != null ? ", best so far " + w.best : "")]; }
+    if (t < run.T) return ["Loading", run.ret ? "Packages " + run.ret[0] + " to " + run.ret[1] : "Nothing to load"];
+    if (!isIntArr(run.ret, 2)) return ["Done", "Returned None"];
+    return [run.verdict.status === "fail" ? "Stopped" : "Loaded", (run.ret[1] - run.ret[0] + 1) + " packages, limit " + level.limit];
+  },
+  tip(run){ const m = []; if (!run.wAt.some(x => x && x.L != null && x.R != null)) m.push("left and right"); if (!run.wAt.some(x => x && x.sum != null)) m.push("total"); return m; },
+  random(L){ const n = 9 + ri(Math.random, 0, 5); L.weights = Array.from({length:n}, () => ri(Math.random, 1, 9)); L.limit = ri(Math.random, 8, 17); }
+};
+
+/* ---------- L2: next heavier crate (monotonic stack) ---------- */
+const NextProblem = {
+  id: "next", tier: 2, tab: "Next heavier", pattern: "Monotonic stack", fname: "next_heavier.py", levelNoun: "stacks",
+  title: "How far to a heavier crate?", sig: "weights", input: "array", view: "array",
+  brief: `<p>Crates sit in a row. For each crate, the sorter wants to know how many positions to the right it has to look to find a strictly heavier crate.</p>
+<p>Write <code>solve(weights)</code> and return a list <code>ans</code> where <code>ans[i]</code> is that distance, or <code>0</code> if no heavier crate comes after crate <code>i</code>.</p>`,
+  show: `Name your stack <code>stack</code>. If it holds indices, those crates get a blue outline so you can watch it stay sorted. Your answer list shows as <code>ans</code>.`,
+  legend: `<span><i class="sw flash"></i>Reading now</span><span><i class="sw queue"></i>On the stack</span><span><i class="sw dot"></i>One read</span>`,
+  starter: `def solve(weights):
+    n = len(weights)
+    ans = [0] * n
+    stack = []  # indices still waiting for a heavier crate
+
+    # Walk left to right. While the current crate is heavier
+    # than the crate on top of the stack, pop it and record
+    # the distance. Then push the current index.
+
+    return ans
+`,
+  watch: ["stack", "st", "ans", "res", "result", "answer", "i", "j", "top"], pointers: ["i", "j"], panel: ["stack", "st", "ans", "res", "result", "answer"], markLists: ["stack", "st"], arrArg: 0, arrLabel2: "crate weights",
+  editor: "array", arr: "weights", arrLabel: "Crate weights", lim: null, maxN: 14, maxV: 99,
+  arrayOf: L => L.weights,
+  levels(){ return [lvl("n1", "Loading dock", {weights:[73,74,75,71,69,72,76,73]}), lvl("n2", "Going down", {weights:[9,7,5,3]}), lvl("n3", "Going up", {weights:[2,4,6,8,10]}), lvl("n4", "Plateaus", {weights:[5,5,6,5,5,7]})]; },
+  hidden(){
+    const rng = mkRng(3), big = Array.from({length:70}, () => ri(rng, 1, 99));
+    const desc = Array.from({length:60}, (_, i) => 100 - i);
+    return [lvl("h1", "Single crate", {weights:[4]}), lvl("h2", "All the same weight", {weights:[3,3,3,3]}), lvl("h3", "Long descending row", {weights:desc}), lvl("h4", "Long random row", {weights:big})];
+  },
+  ref(L){ const w = L.weights, ans = Array(w.length).fill(0), st = []; w.forEach((x, i) => { while (st.length && w[st[st.length-1]] < x){ const j = st.pop(); ans[j] = i - j; } st.push(i); }); return ans; },
+  case(L){ return {args:[L.weights], arr:[0]}; },
+  check(L, ret){
+    const want = this.ref(L);
+    if (!Array.isArray(ret)) return bad("Check the return value", "solve() returned " + pyRepr(ret) + ". Return a list with one distance per crate.");
+    if (ret.length !== want.length) return bad("Wrong length", "Your list has " + ret.length + " entries, but there are " + want.length + " crates.");
+    for (let i = 0; i < want.length; i++) if (ret[i] !== want[i]) return bad("Wrong distance", "For crate " + i + " (weight " + L.weights[i] + ") you have " + pyRepr(ret[i]) + ", but the answer is " + want[i] + (want[i] ? ": crate " + (i + want[i]) + " is the first heavier one." : ": no heavier crate comes after it."));
+    return ok("Every distance is right", want.length <= 12 ? "The answer is " + pyRepr(want) + "." : "All " + want.length + " distances match.");
+  },
+  budget(L){ return 4 * L.weights.length + 4; },
+  tip(run){ return run.wAt.some(w => w && (w.stack || w.st)) ? [] : ["stack"]; },
+  random(L){ const n = ri(Math.random, 6, 12); L.weights = Array.from({length:n}, () => ri(Math.random, 1, 30)); }
+};
+
+/* ---------- L2: robot routes (grid DP) ---------- */
+const ROUTE_MAPS = [
+  ["r1", "Small floor", ["...","...","..."]],
+  ["r2", "One shelf", ["....",".#..","....","...."]],
+  ["r3", "Racks", [".....",".#.#.",".....","#.#..","....."]],
+  ["r4", "Blocked in", ["..#","..#","##."]]
+];
+const RoutesProblem = Object.assign({}, GRID_BASE, {
+  id: "routes", tier: 2, tab: "Robot routes", pattern: "Dynamic programming", fname: "robot_routes.py", customKey: "aisle.customs.routes",
+  title: "Count the routes", sig: "grid", path: false, editTools: ["shelf"], watch: [],
+  brief: `<p>The robot starts in the top-left corner and must reach the bottom-right corner, moving only right or down. <code>grid[r][c]</code> is <code>1</code> for a shelf and <code>0</code> for floor.</p>
+<p>Write <code>solve(grid)</code> and return how many different routes there are. Return <code>0</code> if the start or the end is a shelf.</p>`,
+  show: `Name your table <code>dp</code> (a 2D list) or <code>memo</code> (a dict keyed by <code>(r, c)</code>) and its numbers fill in, cell by cell. Plain recursion without a memo re-reads cells many times, and the floor will show it.`,
+  legend: `<span><i class="sw flash"></i>Reading now</span><span><i class="sw checked"></i>Checked</span><span><i class="sw rack"></i>Shelf</span>`,
+  starter: `def solve(grid):
+    rows, cols = len(grid), len(grid[0])
+    dp = [[0] * cols for _ in range(rows)]
+
+    # dp[r][c] = number of routes from the start to (r, c).
+    # A shelf cell has 0 routes. Otherwise it's the routes
+    # from above plus the routes from the left.
+
+    return dp[rows - 1][cols - 1]
+`,
+  fixCorners(L){ L.start = [0, 0]; L.target = [L.grid.length - 1, L.grid[0].length - 1]; return L; },
+  levels(){ return ROUTE_MAPS.map(([id, name, m]) => lvl(id, name, this.fixCorners(parseMap(m)))); },
+  hidden(){
+    const mk = (id, name, m) => lvl(id, name, this.fixCorners(parseMap(m)));
+    return [mk("h1", "Start is a shelf", ["#..","...","..."]), mk("h2", "Single cell", ["."]), mk("h3", "One row", ["......"]),
+      mk("h4", "Open 9 × 9 floor", Array(9).fill(".........")), mk("h5", "Racks on a 8 × 9 floor", [".........","..#...#..",".........","#...#....",".........",".#.....#.",".........","...#....."])];
+  },
+  case(L){ return {grid: L.grid}; },
+  ref(L){ const G = L.grid, R = G.length, C = G[0].length, dp = Array.from({length:R}, () => Array(C).fill(0));
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++){ if (G[r][c] === 1){ dp[r][c] = 0; continue; } if (!r && !c){ dp[r][c] = 1; continue; } dp[r][c] = (r ? dp[r-1][c] : 0) + (c ? dp[r][c-1] : 0); }
+    return dp[R-1][C-1]; },
+  check(L, ret){
+    const n = this.ref(L);
+    if (typeof ret !== "number" || !Number.isInteger(ret)) return bad("Check the return value", "solve() returned " + pyRepr(ret) + ". Return the number of routes.");
+    if (ret !== n) return bad("Wrong count", "You counted " + ret + " route" + (ret === 1 ? "" : "s") + ", but there " + (n === 1 ? "is 1." : "are " + n + "."));
+    return ok("Routes counted", "There " + (n === 1 ? "is 1 route." : "are " + n + " routes."));
+  },
+  budget(L){ return 4 * L.grid.length * L.grid[0].length + 6; },
+  tip(run){ return run.dAt.some(Boolean) ? [] : ["dp"]; }
+});
+
+/* ---------- L2: dock schedule (intervals) ---------- */
+const DocksProblem = {
+  id: "docks", tier: 2, tab: "Dock schedule", pattern: "Intervals", fname: "dock_schedule.py", levelNoun: "schedules",
+  title: "How many loading docks?", sig: "trucks", input: "array", view: "intervals",
+  brief: `<p>Each truck is <code>(arrive, leave)</code>. A truck needs a dock from <code>arrive</code> up to, but not including, <code>leave</code>, so a truck leaving at time 5 frees its dock for one arriving at 5.</p>
+<p>Write <code>solve(trucks)</code> and return the fewest docks that serve every truck.</p>`,
+  show: `Every read highlights that truck. A min-heap of leave times named <code>heap</code> shows as blue markers on the time axis: “this dock is busy until here.”`,
+  legend: `<span><i class="sw flash"></i>Reading now</span><span><i class="sw visited"></i>Read</span><span><i class="sw queue"></i>Heap: busy until</span>`,
+  starter: `import heapq
+
+
+def solve(trucks):
+    heap = []  # leave times of trucks currently at a dock
+
+    # Handle trucks in order of arrival. Before docking one,
+    # free every dock whose truck has already left.
+    # The answer is the largest the heap ever gets.
+
+    return 0
+`,
+  watch: ["heap", "ends", "active", "docks", "rooms", "busy", "count", "best", "ans", "res", "need", "i"], panel: ["heap", "ends", "active", "docks", "count", "best", "ans", "need"],
+  editor: "random", arrArg: 0,
+  levels(){ return [lvl("d1", "Morning rush", {trucks:[[0,30],[5,10],[15,20]]}), lvl("d2", "Back to back", {trucks:[[1,5],[5,9],[9,12],[2,6]]}), lvl("d3", "Busy afternoon", {trucks:[[1,4],[2,7],[3,5],[6,9],[8,12],[5,8],[10,13]]})]; },
+  hidden(){
+    const rng = mkRng(9), big = Array.from({length:50}, () => { const a = ri(rng, 0, 90); return [a, a + ri(rng, 1, 15)]; });
+    return [lvl("h1", "One truck", {trucks:[[3,8]]}), lvl("h2", "Everyone at once", {trucks:[[0,5],[0,5],[0,5],[0,5]]}), lvl("h3", "Leave time equals next arrival", {trucks:[[0,2],[2,4],[4,6]]}), lvl("h4", "Unsorted input", {trucks:[[7,10],[2,4],[3,8],[1,2]]}), lvl("h5", "Fifty trucks", {trucks:big})];
+  },
+  ref(L){ const ev = []; L.trucks.forEach(([a, b]) => { ev.push([a, 1]); ev.push([b, -1]); }); ev.sort((x, y) => x[0] - y[0] || x[1] - y[1]); let cur = 0, best = 0, at = 0; ev.forEach(([tm, d]) => { cur += d; if (cur > best){ best = cur; at = tm; } }); return {best, at}; },
+  case(L){ return {args:[L.trucks], arr:[0]}; },
+  check(L, ret){
+    const {best, at} = this.ref(L);
+    if (typeof ret !== "number" || !Number.isInteger(ret)) return bad("Check the return value", "solve() returned " + pyRepr(ret) + ". Return the number of docks.");
+    if (ret !== best) return Object.assign(bad("Wrong number of docks", "You said " + ret + ", but " + best + " dock" + (best === 1 ? " is" : "s are") + " needed: at time " + at + ", " + best + " trucks are docked at once." + (ret > best ? " Remember a truck leaving at time t frees its dock for one arriving at t." : "")), {ref: best, peakAt: at});
+    return ok("Schedule works", best + " dock" + (best === 1 ? " is" : "s are") + " enough. The busiest moment is time " + at + ".", {ref: best, peakAt: at});
+  },
+  budget(L){ return 3 * L.trucks.length + 4; },
+  size(w){ return sizeIntervals(w); }, draw(){ drawIntervals(); },
+  tip(run){ return run.wAt.some(w => w && (w.heap || w.ends || w.active)) ? [] : ["heap"]; },
+  random(L){ const n = ri(Math.random, 4, 9); L.trucks = Array.from({length:n}, () => { const a = ri(Math.random, 0, 16); return [a, a + ri(Math.random, 1, 6)]; }); }
+};
+
+/* ---------- L3: wet floor (Dijkstra) ---------- */
+const WET_MAPS = [
+  ["spill", "Spill in aisle 4", ["S...~~....","....~~..#.",".##.~~..#.",".#..~~....","....~~...T","..........",".........."]],
+  ["flood", "Flooded shortcut", ["S~~~~~~~~T",".~~~~~~~~.",".#######..","..........",".~~~~~~~~.",".~~~~~~~~."]],
+  ["puddles", "Puddles everywhere", ["S.~..#....","..~..#.~~.","~~~..#.~~.",".....#....","..#~~~~#..","..#~~~~#..","..#.....~T"]],
+  ["leak", "Roof leak", ["S.#.......",".~#.####..",".~#....#..",".~###..#~~","..~~...#~T","........~."]]
+];
+const WetProblem = Object.assign({}, GRID_BASE, {
+  id: "wet", tier: 3, tab: "Wet floor", pattern: "Dijkstra", fname: "wet_floor.py", customKey: "aisle.customs.wet", wet: true,
+  isShelf: v => v < 0, vals: {open: 1, shelf: -1, wet: 5}, editTools: ["shelf", "wet", "start", "target"], watch: [],
+  title: "Find the cheapest route", sig: "grid, start, target",
+  brief: `<p>Some aisles are wet, and the robot has to creep through them. <code>grid[r][c]</code> is the cost to drive into that cell: <code>1</code> for dry floor, <code>5</code> for a wet patch, <code>-1</code> for a shelf.</p>
+<p>Write <code>solve(grid, start, target)</code> and return the cheapest path as a list of <code>(row, col)</code> cells. The start cell is free. Return <code>[]</code> if the target can’t be reached.</p>`,
+  show: `Name your priority queue <code>heap</code> and your settled cells <code>visited</code>. Heap items like <code>(cost, r, c)</code> or <code>(cost, (r, c))</code> both work. A <code>dist</code> dict shows its costs in each cell’s corner.`,
+  legend: `<span><i class="sw flash"></i>Reading now</span><span><i class="sw visited"></i>Settled</span><span><i class="sw queue"></i>In heap</span><span><i class="sw wet"></i>Wet, cost 5</span><span><i class="sw rack"></i>Shelf</span>`,
+  starter: `import heapq
+
+
+def solve(grid, start, target):
+    rows, cols = len(grid), len(grid[0])
+    dist = {start: 0}
+    heap = [(0, start)]
+    visited = set()
+
+    # Dijkstra: always expand the cheapest cell next.
+    # Return the cheapest path, or [] if unreachable.
+
+    return []
+`,
+  levels(){ return WET_MAPS.map(([id, name, m]) => lvl(id, name, parseMap(m, true))); },
+  hidden(){
+    const H = [];
+    H.push(lvl("h1", "Target behind shelves", parseMap(["S.~#.","~~.#.","..~#T"], true)));
+    const same = parseMap(["...","...","..."], true); same.start = [1,1]; same.target = [1,1]; H.push(lvl("h2", "Robot already on the target", same));
+    H.push(lvl("h3", "Wet everywhere", parseMap(["S~~~~","~~~~~","~~~~T"], true)));
+    H.push(lvl("h4", "Long dry detour beats a short splash", parseMap(["S~T",".#.",".#.",".#.","..."], true)));
+    const rng = mkRng(21), big = Array.from({length:11}, (_, r) => Array.from({length:12}, (_, c) => (r + c === 0 || (r === 10 && c === 11)) ? 1 : rng() < .15 ? -1 : rng() < .35 ? 5 : 1));
+    H.push(lvl("h5", "Big mixed floor", {grid: big, start:[0,0], target:[10,11]}));
+    return H;
+  },
+  check(L, ret){ return checkPath(L, ret, true); },
+  budget(L){ return 10 * L.grid.length * L.grid[0].length + 10; },
+  tip(run){ const m = []; if (!run.qAt.some(Boolean)) m.push("heap"); if (!run.dAt.some(Boolean)) m.push("dist"); return m; }
+});
+
+/* ---------- L3: slowest speed (binary search) ---------- */
+const SpeedProblem = {
+  id: "speed", tier: 3, tab: "Slowest speed", pattern: "Binary search", fname: "slowest_speed.py", levelNoun: "shifts",
+  title: "Find the slowest safe speed", sig: "orders, minutes", input: "array", view: "speed",
+  brief: `<p>Aisle <code>i</code> has <code>orders[i]</code> packages. At speed <code>k</code> the robot picks <code>k</code> packages a minute and works one aisle per minute, so an aisle takes <code>ceil(orders[i] / k)</code> minutes.</p>
+<p>Write <code>solve(orders, minutes)</code> and return the slowest whole-number speed that finishes every aisle within the shift.</p>`,
+  show: `Name your bounds <code>lo</code> and <code>hi</code> and your guess <code>mid</code> to see the range close in. Every tested speed gets a dot: green if it finishes, red if it runs over.`,
+  legend: `<span><i class="sw flash"></i>Testing now</span><span><i class="sw visited"></i>Search range</span><span><i class="sw okdot"></i>Finishes</span><span><i class="sw baddot"></i>Runs over</span>`,
+  starter: `def solve(orders, minutes):
+    lo, hi = 1, max(orders)
+
+    # Binary search on the speed.
+    # At speed mid, each aisle takes ceil(p / mid) minutes.
+    # If the total fits in the shift, try slower.
+    # Otherwise, go faster.
+
+    return lo
+`,
+  watch: ["lo","low","left","l","hi","high","right","r","mid","m","k","speed","guess"],
+  editor: "array", arr: "orders", arrLabel: "Packages per aisle", lim: "minutes", limLabel: "Shift minutes", maxN: 10, maxV: 60, limAtLeastN: true,
+  levels(){ return [lvl("small", "Small batch", {orders:[3,6,7,11], minutes:8}), lvl("steady", "Steady shift", {orders:[30,11,23,4,20], minutes:6}), lvl("rush", "Rush order", {orders:[30,11,23,4,20], minutes:5}), lvl("big", "Big warehouse", {orders:[45,12,38,27,9,50,33], minutes:14}), lvl("easy", "Plenty of time", {orders:[8,15,4,22,10], minutes:60})]; },
+  hidden(){
+    const rng = mkRng(13), big = Array.from({length:30}, () => ri(rng, 100, 5000));
+    return [lvl("h1", "One aisle, one minute", {orders:[1000], minutes:1}), lvl("h2", "One minute per aisle", {orders:[5,9,2], minutes:3}), lvl("h3", "Speed 1 is enough", {orders:[2,3,1], minutes:50}), lvl("h4", "Huge orders", {orders:big, minutes:200})];
+  },
+  case(L){ return {args:[L.orders, L.minutes], arr:[0]}; },
+  check(L, k){
+    if (typeof k !== "number" || !Number.isInteger(k)) return bad("Check the return value", "solve() returned " + pyRepr(k) + ". Return the speed as a whole number.");
+    return judgeSpeed(L, k);
+  },
+  budget(L){ const p = refSpeed(L).probes; return L.orders.length * (2 * p + 3); },
+  prep(run){
+    run.wAt = run.wAt.map(resolveSpeed);
+    run.probeAt = run.wAt.map(w => w && w.mid);
+    run.order = []; run.probeAt.forEach(m => { if (m != null && Number.isInteger(m) && m >= 1 && run.order[run.order.length-1] !== m) run.order.push(m); });
+  },
+  size(w){ return sizeSpeed(w); }, draw(){ drawSpeed(); },
+  finalTicks(){ return 1; }, finalRate(){ return 1.4; },
+  phase(){
+    if (!run.hasRet && t >= run.T) return ["Stopped", run.E + " reads"];
+    if (t < run.E || !run.hasRet){ const idx = Math.min(run.E, Math.max(1, Math.ceil(t))) - 1; const w = run.wAt[idx]; return ["Searching", "Read " + (idx + 1) + " of " + run.E + (w && w.mid != null ? ", testing speed " + w.mid : "")]; }
+    if (typeof run.ret !== "number") return ["Done", "Returned " + pyRepr(run.ret)];
+    if (t < run.T) return ["Planning the shift", "Speed " + run.ret];
+    return [run.verdict.status === "fail" ? "Shift fails" : "Shift planned", "Speed " + run.ret + ", " + minutesAt(level, Math.max(1, run.ret)) + " of " + level.minutes + " minutes"];
+  },
+  tip(run){ return run.wAt.some(w => w && w.mid != null) ? [] : ["mid"]; },
+  random(L){ const n = ri(Math.random, 4, 8); L.orders = Array.from({length:n}, () => ri(Math.random, 2, 50)); L.minutes = n + ri(Math.random, 0, n * 3); }
+};
+
+/* ---------- L3: task order (topological sort) ---------- */
+const TopoProblem = {
+  id: "topo", tier: 3, tab: "Task order", pattern: "Topological sort", fname: "task_order.py", levelNoun: "task lists",
+  title: "Put the tasks in order", sig: "n, deps", input: "array", view: "graph",
+  brief: `<p>The night crew has <code>n</code> tasks, numbered <code>0</code> to <code>n - 1</code>. Each pair <code>(a, b)</code> in <code>deps</code> means task <code>a</code> must happen before task <code>b</code>.</p>
+<p>Write <code>solve(n, deps)</code> and return any order that satisfies every dependency, as a list of all <code>n</code> tasks. If the dependencies loop back on themselves, return <code>[]</code>.</p>`,
+  show: `Every read of <code>deps[i]</code> lights up that arrow. Name your counts <code>indeg</code>, your ready list <code>queue</code> and your result <code>order</code> to see them on the graph.`,
+  legend: `<span><i class="sw flash"></i>Reading now</span><span><i class="sw queue"></i>In queue</span><span><i class="sw visited"></i>Scheduled</span>`,
+  starter: `from collections import deque
+
+
+def solve(n, deps):
+    graph = [[] for _ in range(n)]
+    indeg = [0] * n
+    # Build the graph once: for a, b in deps ...
+
+    queue = deque()  # tasks with no unmet dependencies
+    order = []
+
+    # Kahn's algorithm: repeatedly take a ready task, add it
+    # to order, and lower the indeg of the tasks after it.
+    # If order ends up shorter than n, there's a cycle.
+
+    return order
+`,
+  watch: ["indeg","indegree","in_degree","indegrees","deg","queue","q","ready","stack","frontier","order","res","result","ans","output","visited","state"], panel: ["queue", "q", "ready", "stack", "order", "res", "result", "visited"],
+  editor: "random", arrArg: 1,
+  levels(){ return [lvl("t1", "Night shift", {n:6, deps:[[0,1],[0,2],[1,3],[2,3],[3,4],[5,4]]}), lvl("t2", "Two crews", {n:7, deps:[[0,1],[1,2],[3,4],[4,5],[2,6],[5,6]]}), lvl("t3", "Circular wait", {n:4, deps:[[0,1],[1,2],[2,3],[3,1]]}), lvl("t4", "Free for all", {n:5, deps:[]})]; },
+  hidden(){
+    const rng = mkRng(17), n = 40, perm = Array.from({length:n}, (_, i) => i).sort(() => rng() - .5), deps = [];
+    for (let k = 0; k < 90; k++){ const a = ri(rng, 0, n-2), b = ri(rng, a+1, n-1); deps.push([perm[a], perm[b]]); }
+    const cyc = deps.slice(); cyc.push([perm[n-1], perm[0]]);
+    return [lvl("h1", "One task", {n:1, deps:[]}), lvl("h2", "A long chain", {n:8, deps:[[7,6],[6,5],[5,4],[4,3],[3,2],[2,1],[1,0]]}), lvl("h3", "Task depends on itself", {n:3, deps:[[0,1],[2,2]]}), lvl("h4", "Forty tasks", {n, deps}), lvl("h5", "Forty tasks with one loop", {n, deps:cyc})];
+  },
+  ref(L){ const g = Array.from({length:L.n}, () => []), d = Array(L.n).fill(0); L.deps.forEach(([a, b]) => { g[a].push(b); d[b]++; }); const q = []; d.forEach((x, i) => { if (!x) q.push(i); }); const o = []; while (q.length){ const x = q.shift(); o.push(x); g[x].forEach(y => { if (!--d[y]) q.push(y); }); } return o.length === L.n ? o : null; },
+  case(L){ return {args:[L.n, L.deps], arr:[1]}; },
+  check(L, ret){
+    const ref = this.ref(L);
+    if (!Array.isArray(ret) || ret.some(x => typeof x !== "number")) return bad("Check the return value", "solve() returned " + pyRepr(ret) + ". Return a list of task numbers, or [] if there’s a cycle.");
+    if (!ref){ return ret.length ? bad("There’s a cycle", "These dependencies loop back on themselves, so no order works. Return []." ) : ok("Cycle detected", "The dependencies loop, and you correctly returned []."); }
+    if (!ret.length) return bad("Order exists", "You returned [], but a valid order exists, for example " + pyRepr(ref) + ".");
+    if (ret.length !== L.n || new Set(ret).size !== L.n || ret.some(x => x < 0 || x >= L.n || !Number.isInteger(x))) return bad("Not every task once", "The order must list each task from 0 to " + (L.n - 1) + " exactly once. Yours has " + ret.length + " entries.");
+    const pos = new Map(ret.map((x, i) => [x, i]));
+    for (const [a, b] of L.deps) if (pos.get(a) > pos.get(b)) return bad("Dependency broken", "Task " + a + " must come before task " + b + ", but your order has it after.");
+    return ok("Valid order", "Every dependency is respected.");
+  },
+  budget(L){ return 3 * L.deps.length + 4; },
+  size(w){ return sizeGraph(w); }, draw(){ drawGraph(); },
+  showRet(ret){ return Array.isArray(ret) ? pyRepr(ret) : pyRepr(ret); },
+  tip(run){ return run.wAt.some(w => w && (w.indeg || w.indegree || w.in_degree)) ? [] : ["indeg"]; },
+  random(L){ const n = ri(Math.random, 5, 8), perm = Array.from({length:n}, (_, i) => i).sort(() => Math.random() - .5), deps = [], seen = new Set(); for (let k = 0; k < n + 1; k++){ const a = ri(Math.random, 0, n-2), b = ri(Math.random, a+1, n-1), key = perm[a] + "," + perm[b]; if (!seen.has(key)){ seen.add(key); deps.push([perm[a], perm[b]]); } } L.n = n; L.deps = deps; }
+};
+
+/* ---------- L3: sorting tree check (BST validation) ---------- */
+const BstProblem = {
+  id: "bst", tier: 3, tab: "Sorting tree", pattern: "Trees", fname: "sorting_tree.py", levelNoun: "trees",
+  title: "Is the sorting tree valid?", sig: "root", input: "tree", view: "tree",
+  brief: `<p>Packages are routed through a binary tree of sorting gates. Each <code>node</code> has <code>node.val</code>, <code>node.left</code> and <code>node.right</code> (missing children are <code>None</code>). The tree is valid only if every value in a node’s left subtree is smaller than the node, and every value in its right subtree is larger. No duplicates.</p>
+<p>Write <code>solve(root)</code> and return <code>True</code> if the tree is valid, otherwise <code>False</code>.</p>`,
+  show: `Every time your code reads a node, it lights up; a red ×2 means it was read more than once. Name your bounds <code>lo</code> and <code>hi</code>, or an iterative <code>stack</code>, to see them.`,
+  legend: `<span><i class="sw flash"></i>Reading now</span><span><i class="sw visited"></i>Visited</span><span><i class="sw queue"></i>On the stack</span>`,
+  starter: `def solve(root):
+    # Each node must fit between a lower and an upper bound
+    # inherited from its ancestors, not just its parent.
+    def check(node, lo, hi):
+        if node is None:
+            return True
+        # ...
+        return True
+
+    return check(root, float("-inf"), float("inf"))
+`,
+  watch: ["stack","queue","q","node","cur","curr","prev","lo","hi","low","high","lower","upper","mn","mx"], panel: ["lo","hi","low","high","lower","upper","prev","stack"],
+  editor: "random",
+  levels(){ return [lvl("b1", "Neat tree", {tree:[8,4,12,2,6,10,14]}), lvl("b2", "Sneaky grandchild", {tree:[8,4,12,2,9,10,14]}), lvl("b3", "Lopsided", {tree:[5,3,null,2,4,1]}), lvl("b4", "Duplicate value", {tree:[5,5,7]})]; },
+  hidden(){
+    const rightChain = n => { let tree = [0]; for (let v = 1; v < n; v++) tree = tree.concat([null, v]); return tree; };
+    return [lvl("h1", "Single node", {tree:[7]}), lvl("h2", "Empty tree", {tree:[]}), lvl("h3", "Deep violation", {tree:[10,5,15,null,null,6,20]}),
+      lvl("h4", "Long valid chain", {tree:rightChain(24)}), lvl("h5", "Balanced and valid", {tree:[16,8,24,4,12,20,28,2,6,10,14,18,22,26,30]}),
+      lvl("h6", "Equal right child", {tree:[3,1,3]})];
+  },
+  ref(L){
+    // Rebuild with the same level-order rule as the harness.
+    const vals = L.tree; if (!vals.length || vals[0] === null) return {valid: true, badNode: null};
+    const nodes = vals.map((v, i) => v === null ? null : {id:i, v, l:null, r:null}); const q = [nodes[0]]; let i = 1;
+    while (q.length && i < vals.length){ const c = q.shift(); if (i < vals.length){ c.l = nodes[i]; if (nodes[i]) q.push(nodes[i]); i++; } if (i < vals.length){ c.r = nodes[i]; if (nodes[i]) q.push(nodes[i]); i++; } }
+    let badNode = null; const go = (n, lo, hi) => { if (!n || badNode !== null) return; if (!(n.v > lo && n.v < hi)){ badNode = n.id; return; } go(n.l, lo, n.v); go(n.r, n.v, hi); };
+    go(nodes[0], -Infinity, Infinity); return {valid: badNode === null, badNode};
+  },
+  case(L){ return {tree: L.tree}; },
+  check(L, ret){
+    const {valid, badNode} = this.ref(L);
+    if (typeof ret !== "boolean") return bad("Check the return value", "solve() returned " + pyRepr(ret) + ". Return True or False.");
+    if (ret !== valid) return Object.assign(bad("Wrong answer", valid ? "This tree is valid, but you returned False." : "You returned True, but the node with value " + L.tree[badNode] + " breaks the rule against one of its ancestors, not just its parent."), {badNode: valid ? null : badNode});
+    return ok("Correct", valid ? "The tree is valid." : "The tree is invalid: the node with value " + L.tree[badNode] + " is out of place.", {badNode: valid ? null : badNode});
+  },
+  budget(L){ return 7 * L.tree.filter(v => v !== null).length + 8; },
+  size(w){ return sizeTree(w); }, draw(){ drawTree(); },
+  tip(){ return []; },
+  random(L){
+    // Build a random BST in heap positions, then write it in level order with gaps.
+    const vals = [], n = ri(Math.random, 5, 11);
+    for (let k = 0; k < n; k++){ const key = ri(Math.random, 1, 40); let i = 0; while (i < 63){ if (vals[i] == null){ vals[i] = key; break; } if (key === vals[i]) break; i = key < vals[i] ? 2*i + 1 : 2*i + 2; } }
+    const res = [vals[0]], q = [0];
+    while (q.length){ const i = q.shift(); [2*i+1, 2*i+2].forEach(c => { const v = vals[c] == null ? null : vals[c]; res.push(v); if (v !== null) q.push(c); }); }
+    while (res.length && res[res.length - 1] === null) res.pop();
+    if (Math.random() < .5 && res.length > 3){ const k = ri(Math.random, 1, res.length - 1); if (res[k] !== null) res[k] += ri(Math.random, 8, 20); }
+    L.tree = res;
+  }
+};
+
+const PROBLEMS = [BfsProblem, PairProblem, IslandProblem, TopKProblem, BeltProblem, NextProblem, RoutesProblem, DocksProblem, SpeedProblem, WetProblem, TopoProblem, BstProblem];
+
+/* ---------- Python runtime: Web Worker first, main thread as fallback ---------- */
+const BRYTHON = ["https://cdn.jsdelivr.net/npm/brython@3.14.3/brython.min.js", "https://cdn.jsdelivr.net/npm/brython@3.14.3/brython_stdlib.js"];
+const TIME_LIMIT = 10000;
+let HARNESS = "";   // Python source of harness.py, fetched at startup
+const WORKER_SRC = `
+self.onmessage = function(e){
+  var m = e.data;
+  if (m.type === "init"){
+    try{
+      importScripts(m.urls[0], m.urls[1]);
+      try{ brython({debug:1}); }catch(err){}
+      __BRYTHON__.runPythonSource(m.harness, {});
+      if (typeof self.pyRun !== "function") throw new Error("harness did not load");
+      self.postMessage({type:"ready"});
+    }catch(err){ self.postMessage({type:"fail", msg:String(err && err.message || err)}); }
+  } else if (m.type === "run"){
+    var out;
+    try{ out = self.pyRun(m.code, m.payload); }
+    catch(err){ out = JSON.stringify({compileError:"The Python runtime failed: " + (err && err.message || err)}); }
+    self.postMessage({type:"result", id:m.id, json:out});
+  }
+};`;
+const PY = {
+  mode: null, worker: null, ready: false, job: null, seq: 0, initTimer: 0, blobUrl: null,
+  start(){
+    if (window.Worker && !this.noWorker) this.startWorker(); else this.startMain();
+  },
+  startWorker(){
+    this.ready = false; this.mode = "worker"; setRunState("loading");
+    try{
+      this.blobUrl = this.blobUrl || URL.createObjectURL(new Blob([WORKER_SRC], {type:"text/javascript"}));
+      const w = new Worker(this.blobUrl);
+      this.worker = w;
+      w.onmessage = e => this.onMessage(e.data);
+      w.onerror = e => { e.preventDefault && e.preventDefault(); if (!this.ready) this.workerFailed(); };
+      w.postMessage({type:"init", urls:BRYTHON, harness:HARNESS});
+      clearTimeout(this.initTimer);
+      this.initTimer = setTimeout(() => { if (!this.ready && this.worker === w) this.workerFailed(); }, 40000);
+    }catch(e){ this.workerFailed(); }
+  },
+  workerFailed(){
+    clearTimeout(this.initTimer);
+    if (this.worker){ try{ this.worker.terminate(); }catch(e){} this.worker = null; }
+    if (this.mode === "main") return;
+    this.noWorker = true; this.startMain();
+  },
+  startMain(){
+    this.mode = "main"; this.ready = false; setRunState("loading");
+    if (window.pyReady){ this.ready = true; setRunState("ready"); return; }
+    const load = (src, cb) => { const s = document.createElement("script"); s.src = src; s.onload = cb; s.onerror = () => setRunState("failed"); document.head.appendChild(s); };
+    load(BRYTHON[0], () => load(BRYTHON[1], () => {
+      try{
+        try{ brython({debug:1}); }catch(e){}
+        __BRYTHON__.runPythonSource(HARNESS, {});
+      }catch(e){ console.error(e); }
+      if (window.pyReady){ this.ready = true; setRunState("ready"); } else setRunState("failed");
+    }));
+  },
+  onMessage(m){
+    if (m.type === "ready"){ clearTimeout(this.initTimer); this.ready = true; setRunState("ready"); }
+    else if (m.type === "fail"){ this.workerFailed(); }
+    else if (m.type === "result" && this.job && m.id === this.job.id){
+      const j = this.job; this.job = null; clearTimeout(j.timer);
+      let res; try{ res = JSON.parse(m.json); }catch(e){ res = {compileError:"Couldn’t read the result from Python."}; }
+      j.resolve(res);
+    }
+  },
+  run(code, payload){
+    return new Promise(resolve => {
+      if (this.mode === "worker"){
+        const id = ++this.seq;
+        this.job = {id, resolve, timer: setTimeout(() => this.kill("Stopped after " + (TIME_LIMIT/1000) + " seconds. Your code may be stuck in a loop that never ends."), TIME_LIMIT)};
+        this.worker.postMessage({type:"run", id, code, payload});
+      } else {
+        setTimeout(() => {
+          let res;
+          try{ res = JSON.parse(window.pyRun(code, payload)); }
+          catch(e){ res = {compileError:"The Python runtime failed: " + (e && e.message || e)}; }
+          resolve(res);
+        }, 30);
+      }
+    });
+  },
+  canStop(){ return this.mode === "worker" && !!this.job; },
+  kill(msg){
+    const j = this.job; this.job = null;
+    if (j){ clearTimeout(j.timer); j.resolve({stopped:true, error:msg}); }
+    if (this.worker){ try{ this.worker.terminate(); }catch(e){} this.worker = null; }
+    this.startWorker();
+  }
+};
+let runState = "loading", runKind = "run";
+function setRunState(s){
+  runState = s;
+  const b = $("bRun"), lab = $("runLabel"), hint = $("runHint"), sb = $("bSubmit");
+  const live = s === "running";
+  b.classList.toggle("stop", live && PY.mode === "worker");
+  sb.disabled = s !== "ready";
+  if (s === "loading"){ b.disabled = true; lab.textContent = PY.worker === null && PY.mode === "worker" ? "Restarting Python…" : "Loading Python…"; }
+  else if (s === "ready"){ b.disabled = false; lab.textContent = "Run"; $("submitLabel").textContent = "Submit"; hint.textContent = PY.mode === "worker" ? "" : "Long loops may freeze the page in this browser."; }
+  else if (live){ b.disabled = PY.mode !== "worker"; lab.textContent = PY.mode === "worker" ? "Stop" : "Running…"; if (runKind === "submit") $("submitLabel").textContent = "Testing…"; }
+  else if (s === "failed"){ b.disabled = true; lab.textContent = "Python didn’t load"; hint.textContent = "Reload the page to try again."; }
+}
+
+/* =====================================================================
+   Tiers, progress and mock interviews
+   ===================================================================== */
+const TIERS = [
+  {n:1, name:"Warm-up", minutes:0, blurb:"Starter code with hints. Brute force passes, with a note."},
+  {n:2, name:"Fundamentals", minutes:60, blurb:"Just the function signature. Brute force passes, but costs you in the interview."},
+  {n:3, name:"New grad", minutes:45, blurb:"Google’s entry level. Brute force fails: the optimal approach is expected."},
+  {n:4, name:"Mid-level", minutes:45, blurb:"Coming next."},
+  {n:5, name:"Senior", minutes:45, blurb:"Coming next."}
+];
+const SIGNALS = ["Strong No Hire", "No Hire", "Lean No Hire", "Lean Hire", "Hire", "Strong Hire"];
+let progress = Object.assign({unlocked: 1, best: {}, solved: {}}, store.get("aisle.progress", {}));
+let iv = store.get("aisle.interview", null);
+let tierCur = Math.min(store.get("aisle.tier", 1), progress.unlocked);
+if (iv) tierCur = iv.tier;
+const saveProgress = () => store.set("aisle.progress", progress);
+const saveIv = () => iv ? store.set("aisle.interview", iv) : store.del("aisle.interview");
+const LEVEL_KEY = {grid:"aisle.current", wet:"aisle.current.wet", belt:"aisle.current.belt", speed:"aisle.current.speed"};
+const levelKey = p => LEVEL_KEY[p.id] || "aisle.lvl." + p.id;
+const codeKey = p => iv ? "aisle.iv." + p.id : (p.codeKey || "aisle.code." + p.id);
+const starterFor = p => p.tier === 1 ? p.starter : "def solve(" + p.sig + "):\n    pass\n";
+const tierProblems = n => PROBLEMS.filter(p => p.tier === n);
+const signalIndex = s => SIGNALS.indexOf(s);
+
+function renderTiers(){
+  const nav = $("tiers"); nav.innerHTML = "";
+  TIERS.forEach(T => {
+    const b = document.createElement("button");
+    const locked = T.n > progress.unlocked;
+    b.className = "tier"; b.setAttribute("role", "tab"); b.setAttribute("aria-selected", T.n === tierCur);
+    b.disabled = locked || (iv && iv.tier !== T.n);
+    const best = progress.best[T.n];
+    const sub = locked ? "Locked" : best ? best : T.n < progress.unlocked ? "Passed" : "Open";
+    b.innerHTML = "<b>L" + T.n + "</b><span>" + T.name + "</span><small>" + (locked ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zm2 0h6V7a3 3 0 0 0-6 0z"/></svg>' : "") + sub + "</small>";
+    if (!b.disabled) b.onclick = () => { if (T.n !== tierCur) switchTier(T.n); };
+    nav.appendChild(b);
+  });
+}
+function switchTier(n){
+  if (iv && iv.tier !== n) return;
+  if (editing) toggleEdit(false);
+  tierCur = n; store.set("aisle.tier", n);
+  const pool = iv ? iv.pids.map(id => PROBLEMS.find(p => p.id === id)) : tierProblems(n);
+  document.body.classList.toggle("soon", !pool.length);
+  renderTiers(); renderIvBar();
+  if (!pool.length){ renderSoon(); return; }
+  const want = store.get("aisle.problem." + n, null);
+  switchProblem(pool.find(p => p.id === want) || pool[0]);
+}
+function renderSoon(){
+  $("soonBody").innerHTML = `<h2>L${tierCur} is next on the build list</h2>
+<p>You’ve unlocked it, and the problems are on the way. L4 and L5 will add the remaining interview patterns, each with a follow-up that unlocks after you solve the first part:</p>
+<p>backtracking (pack the truck exactly), one-dimensional DP (fewest boxes for an order), linked lists (re-couple the cart train), union-find (merging warehouse zones), tries (barcode prefixes), and BFS over extra state (knock down shelves, collect every package).</p>`;
+}
+
+function renderTabs(){
+  const nav = $("probs"); nav.innerHTML = "";
+  const pool = iv ? iv.pids.map(id => PROBLEMS.find(p => p.id === id)) : tierProblems(tierCur);
+  pool.forEach(p => {
+    const b = document.createElement("button");
+    b.className = "prob"; b.setAttribute("role", "tab"); b.setAttribute("aria-selected", p === P);
+    const done = iv ? (iv.subs[p.id] || []).some(s => s.allPass) : progress.solved[p.id];
+    b.innerHTML = "<span>" + p.tab + (done ? ' <i class="tick" aria-label="solved">✓</i>' : "") + "</span><small>" + (iv ? "Problem " + (iv.pids.indexOf(p.id) + 1) : p.pattern) + "</small>";
+    b.onclick = () => { if (p !== P) switchProblem(p); };
+    nav.appendChild(b);
+  });
+}
+
+let ivTimer = 0;
+function renderIvBar(){
+  const bar = $("ivBar"), T = TIERS[tierCur - 1];
+  clearInterval(ivTimer);
+  if (!tierProblems(tierCur).length){ bar.innerHTML = ""; bar.hidden = true; return; }
+  bar.hidden = false;
+  if (!iv){
+    const next = tierCur < 5 && progress.unlocked <= tierCur;
+    bar.className = "iv-bar";
+    bar.innerHTML = `<div class="iv-text"><b>L${tierCur} ${T.name}.</b> ${T.blurb} ${next ? "Get <b>Hire</b> or better in the mock interview to unlock L" + (tierCur + 1) + "." : progress.best[tierCur] ? "Your best mock interview: <b>" + progress.best[tierCur] + "</b>." : ""}</div>
+<button class="iv-start" id="bStartIv">Start mock interview</button>`;
+    $("bStartIv").onclick = startInterview;
+    return;
+  }
+  bar.className = "iv-bar live";
+  bar.innerHTML = `<div class="iv-text"><b>Mock interview, L${iv.tier}.</b> Two problems. <span id="ivClock"></span></div><button class="iv-start" id="bEndIv">Finish interview</button>`;
+  $("bEndIv").onclick = () => finishInterview(false);
+  const tickClock = () => {
+    const el = $("ivClock"); if (!el || !iv) return;
+    if (!iv.limit){ const m = Math.floor((Date.now() - iv.start) / 60000); el.textContent = "Untimed, " + m + " min so far."; return; }
+    const left = iv.start + iv.limit - Date.now();
+    if (left <= 0){ finishInterview(true); return; }
+    const m = Math.floor(left / 60000), s = Math.floor(left / 1000) % 60;
+    el.textContent = m + ":" + String(s).padStart(2, "0") + " left.";
+    el.classList.toggle("low", left < 5 * 60000);
+  };
+  tickClock(); ivTimer = setInterval(tickClock, 1000);
+}
+function startInterview(){
+  const pool = tierProblems(tierCur).slice().sort(() => Math.random() - .5);
+  const T = TIERS[tierCur - 1];
+  iv = {tier: tierCur, pids: pool.slice(0, 2).map(p => p.id), start: Date.now(), limit: T.minutes * 60000, subs: {}};
+  iv.pids.forEach(id => { const p = PROBLEMS.find(x => x.id === id); store.set("aisle.iv." + id, starterFor(p)); });
+  saveIv();
+  $("out").innerHTML = '<span class="empty">The interview has started. Run checks the example; Submit runs the hidden tests and counts toward your rating.</span>';
+  switchTier(tierCur);
+}
+function problemScore(id){
+  const subs = (iv.subs[id] || []);
+  if (!subs.length) return {score: 0, note: "Not submitted"};
+  const firstGood = subs.findIndex(s => s.allPass && !s.slow);
+  if (firstGood >= 0){
+    const misses = Math.min(2, firstGood);
+    return {score: 4 - .5 * misses, note: "All tests passed, efficient" + (misses ? ", after " + misses + " failed submission" + (misses > 1 ? "s" : "") : " on the first submission")};
+  }
+  const slow = subs.find(s => s.allPass && s.slow);
+  if (slow) return {score: 2.5, note: "All tests passed, but brute force"};
+  const best = subs.reduce((a, s) => s.pass / s.total > a.pass / a.total ? s : a, subs[0]);
+  const frac = best.pass / best.total;
+  return {score: frac >= .5 ? 1.5 : frac > 0 ? 1 : .5, note: best.pass + " of " + best.total + " tests passed"};
+}
+function finishInterview(timeUp){
+  if (!iv) return;
+  clearInterval(ivTimer);
+  const T = iv.tier, used = Math.round((Date.now() - iv.start) / 60000);
+  const rows = iv.pids.map(id => Object.assign({p: PROBLEMS.find(x => x.id === id)}, problemScore(id)));
+  const avg = rows.reduce((a, r) => a + r.score, 0) / rows.length;
+  const sig = avg >= 3.75 ? "Strong Hire" : avg >= 3 ? "Hire" : avg >= 2.25 ? "Lean Hire" : avg >= 1.5 ? "Lean No Hire" : avg >= .75 ? "No Hire" : "Strong No Hire";
+  const prevBest = progress.best[T];
+  if (!prevBest || signalIndex(sig) > signalIndex(prevBest)) progress.best[T] = sig;
+  const passed = signalIndex(sig) >= signalIndex("Hire");
+  let unlockedNow = false;
+  if (passed && T < 5 && progress.unlocked <= T){ progress.unlocked = T + 1; unlockedNow = true; }
+  saveProgress();
+  iv.pids.forEach(id => store.del("aisle.iv." + id));
+  iv = null; saveIv();
+  const good = signalIndex(sig) >= 4, mid = signalIndex(sig) === 3;
+  $("resSignal").textContent = sig; $("resSignal").className = "res-signal " + (good ? "good" : mid ? "mid" : "low");
+  $("resLead").textContent = (timeUp ? "Time’s up. " : "") + "L" + T + " mock interview, " + (used < 1 ? "under a minute" : used + " minute" + (used === 1 ? "" : "s")) + ". " +
+    (unlockedNow ? "L" + (T + 1) + " is now unlocked." : passed ? "You’ve already unlocked the next level." : "You need Hire or better to unlock L" + (T + 1) + ". Practice, then try again.");
+  $("resRows").innerHTML = rows.map(r => `<li><b>${r.p.tab}</b> <span>${r.p.pattern}</span><em>${r.note}</em></li>`).join("");
+  $("resNext").hidden = !(passed && T < 5); $("resNext").textContent = "Go to L" + (T + 1);
+  $("resNext").onclick = () => { closeResults(); switchTier(T + 1); };
+  $("results").hidden = false; $("results").querySelector("button").focus();
+  switchTier(T);
+}
+function closeResults(){ $("results").hidden = true; }
+$("resClose").onclick = closeResults;
+
+/* =====================================================================
+   Problems and levels
+   ===================================================================== */
+function customs(){ return P.customKey ? store.get(P.customKey, []).map(c => Object.assign(deep(c), {custom:true})) : []; }
+function fillLevelSelect(){
+  const sel = $("levelSel"); sel.innerHTML = "";
+  const g1 = document.createElement("optgroup"); g1.label = "Example " + (P.levelNoun || "inputs");
+  P.levels().forEach(p => { const o = document.createElement("option"); o.value = p.id; o.textContent = p.name; g1.appendChild(o); });
+  sel.appendChild(g1);
+  const cs = customs();
+  if (cs.length){ const g2 = document.createElement("optgroup"); g2.label = "My " + (P.levelNoun || "inputs"); cs.forEach(c => { const o = document.createElement("option"); o.value = c.id; o.textContent = c.name; g2.appendChild(o); }); sel.appendChild(g2); }
+  if (level && level.id === "__edited"){ const o = document.createElement("option"); o.value = "__edited"; o.textContent = "Edited (unsaved)"; sel.appendChild(o); }
+  sel.value = level ? level.id : P.levels()[0].id;
+}
+function loadLevel(id){
+  const L = P.levels().concat(customs()).find(l => l.id === id) || P.levels()[0];
+  level = deep(L);
+  store.set(levelKey(P), level);
+  clearRun(); resize(); fillLevelSelect(); syncEditUI();
+}
+function validLevel(p, L){
+  if (!L || typeof L !== "object") return false;
+  const ex = p.levels()[0];
+  return Object.keys(ex).every(k => L[k] !== undefined && (Array.isArray(ex[k]) === Array.isArray(L[k])));
+}
+function switchProblem(p){
+  if (editing) toggleEdit(false);
+  if (P && level) store.set(codeKey(P), code.value);
+  P = p; store.set("aisle.problem." + tierCur, P.id);
+  const saved = store.get(levelKey(P), null);
+  level = validLevel(P, saved) ? saved : deep(P.levels()[0]);
+  if (level.custom && !customs().some(c => c.id === level.id)) level = deep(P.levels()[0]);
+  code.value = store.get(codeKey(P), starterFor(P)); syncGutter(); code.scrollTop = 0;
+  $("briefTitle").textContent = P.title;
+  $("briefPattern").textContent = P.pattern;
+  $("briefBody").innerHTML = P.brief + `<details class="more"><summary>How the simulation shows your code</summary><p>${P.show}</p></details>`;
+  $("legend").innerHTML = P.legend;
+  $("fname").textContent = P.fname;
+  $("bEdit").textContent = "Edit input";
+  $("bEdit").hidden = !!iv;
+  $("submitHint").textContent = "Submit runs " + (P.levels().length + P.hidden().length) + " tests, " + P.hidden().length + " of them hidden.";
+  renderTabs(); fillLevelSelect(); clearRun(); resize(); syncEditUI();
+}
+
+/* ---------- run state ---------- */
+function clearRun(){
+  run = null; t = 0; setPlaying(false);
+  $("verdict").className = "verdict"; $("vTests").innerHTML = "";
+  $("phase").textContent = "Ready"; $("phaseSub").textContent = "";
+  syncTransport(); draw();
+}
+function evaluate(L, r, tier){
+  if (!r.ok) return {status:"fail", title: r.limit ? "Too slow" : "Your code raised an error", text: r.limit ? r.error : (r.error || "").split("\n").pop()};
+  const v = P.check(L, r.ret);
+  if (v.status === "pass" && P.budget){
+    const b = P.budget(L);
+    if (b != null && r.reads > b){
+      v.slow = true; v.ratio = r.reads / b;
+      if (tier >= 3){ v.status = "fail"; v.title = "Correct, but too slow for L" + tier; v.text = "Right answer, but your code did " + r.reads + " reads, and an efficient solution stays under about " + b + ". From L3 up, the optimal approach is expected."; }
+      else { v.status = "long"; v.title = "Correct, but brute force"; v.text += " It took " + r.reads + " reads; an efficient solution stays under about " + b + "."; }
+    }
+  }
+  return v;
+}
+function prepareRun(r){
+  const events = (r.events || []).filter(e => e.k === "read" || e.k === "write" || e.k === "node");
+  const n = events.length, vAt = new Array(n), qAt = new Array(n), dAt = new Array(n), wAt = new Array(n);
+  let v = null, q = null, d = null, w = null;
+  events.forEach((e, i) => { if (e.v) v = e.v; if (e.q) q = e.q; if (e.d) d = e.d; if (e.w) w = e.w; vAt[i] = v; qAt[i] = q; dAt[i] = d; wAt[i] = w; });
+  run = {events, vAt, qAt, dAt, wAt, ret: r.ret, hasRet: !!r.ok, reads: r.reads, E: n};
+  if (P.prep) P.prep(run);
+  run.verdict = r.ok ? evaluate(level, r, P.tier) : null;
+  run.S = run.verdict ? (P.finalTicks ? P.finalTicks(run) : 1) : 0;
+  run.T = run.E + run.S;
+  t = 0;
+}
+
+/* ---------- canvas ---------- */
+const VIEWS = {
+  array: {size: sizeArray, draw: drawArray}, intervals: {size: sizeIntervals, draw: drawIntervals},
+  graph: {size: sizeGraph, draw: drawGraph}, tree: {size: sizeTree, draw: drawTree}
+};
+function resize(){
+  if (!level || !P) return;
+  const w = $("floorWrap").clientWidth || 320;
+  const [W, H] = P.size ? P.size(w) : VIEWS[P.view].size(w);
+  dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  cv.style.width = W + "px"; cv.style.height = H + "px";
+  draw();
+}
+function draw(){
+  if (!level || !P) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (P.draw) P.draw(); else VIEWS[P.view].draw();
+}
+
+/* ---------- playback ---------- */
+const speedOf = () => Math.round(Math.pow(10, (+$("speed").value)/100 * 2.3));
+function updateSpeedLabel(){ $("speedOut").textContent = speedOf() + " / sec"; }
+function setPlaying(p){
+  playing = p;
+  $("bPlay").setAttribute("aria-label", p ? "Pause" : "Play"); $("bPlay").title = p ? "Pause" : "Play";
+  $("playIcon").innerHTML = p ? '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>' : '<path d="M7 5v14l12-7z"/>';
+  if (p){ lastTs = 0; requestAnimationFrame(tick); }
+}
+function tick(ts){
+  if (!playing || !run) return;
+  if (!lastTs) lastTs = ts;
+  const dt = Math.min(.1, (ts - lastTs) / 1000); lastTs = ts;
+  const sp = speedOf();
+  t += dt * (t >= run.E ? (P.finalRate ? P.finalRate(sp) : 1.4) : sp);
+  if (t >= run.T){ t = run.T; setPlaying(false); }
+  syncTransport(); draw();
+  if (playing) requestAnimationFrame(tick);
+}
+function defaultPhase(){
+  if (!run.hasRet && t >= run.T) return ["Stopped", run.E + " reads before the error"];
+  if (t < run.E || !run.hasRet){
+    const idx = Math.min(run.E, Math.max(1, Math.ceil(t))) - 1;
+    return ["Running", "Read " + (idx + 1) + " of " + run.E + (P.phaseExtra ? P.phaseExtra(run.wAt[idx]) : "")];
+  }
+  if (P.path && Array.isArray(run.ret) && run.verdict && run.verdict.ref){
+    if (t < run.T) return ["Driving", "Move " + Math.min(run.verdict.valid, Math.floor(t - run.E) + 1) + " of " + Math.max(0, run.ret.length - 1)];
+    const st = run.verdict.status;
+    return [!run.ret.length ? "Done" : st === "pass" ? "Arrived" : st === "long" ? "Arrived, with a note" : "Stopped", run.ret.length ? (run.ret.length - 1) + " moves returned" : "Empty path returned"];
+  }
+  return [run.verdict.status === "fail" ? "Not quite" : "Done", run.E + " reads"];
+}
+function syncTransport(){
+  const has = !!run && run.T > 0;
+  ["bRestart","bBack","bPlay","bFwd","scrub"].forEach(id => $(id).disabled = !has);
+  if (!run){ $("scrub").max = 0; $("scrub").value = 0; return; }
+  $("scrub").max = run.T; $("scrub").value = Math.floor(t);
+  const [a, b] = P.phase ? P.phase() : defaultPhase(); $("phase").textContent = a; $("phaseSub").textContent = b;
+  if (run.verdict && !run.submitView) $("verdict").className = t >= run.T ? "verdict show " + run.verdict.status : "verdict";
+}
+$("bPlay").onclick = () => { if (!run) return; if (t >= run.T) t = 0; setPlaying(!playing); };
+$("bRestart").onclick = () => { t = 0; setPlaying(false); syncTransport(); draw(); };
+$("bBack").onclick = () => { if (!run) return; setPlaying(false); t = Math.max(0, Math.ceil(t) - 1); syncTransport(); draw(); };
+$("bFwd").onclick = () => { if (!run) return; setPlaying(false); t = Math.min(run.T, Math.floor(t) + 1); syncTransport(); draw(); };
+$("scrub").oninput = e => { setPlaying(false); t = +e.target.value; syncTransport(); draw(); };
+$("speed").oninput = () => { updateSpeedLabel(); store.set("aisle.speed", +$("speed").value); };
+
+/* ---------- verdict + console ---------- */
+function showVerdict(v, extra){
+  $("vTitle").textContent = v.title; $("vText").textContent = v.text + (extra || "");
+  $("vStats").innerHTML = "";
+}
+function esc(s){ return String(s).replace(/[&<>]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[ch])); }
+function writeConsole(parts){
+  const html = parts.filter(p => p.text).map(p => '<span class="' + (p.cls || "") + '">' + esc(p.text) + "</span>").join("\n");
+  $("out").innerHTML = html || '<span class="empty">No output. Use print() to log values while you work.</span>';
+}
+
+/* ---------- editor ---------- */
+const code = $("code"), gutter = $("gutter");
+function syncGutter(){
+  const n = code.value.split("\n").length;
+  let s = ""; for (let i = 1; i <= n; i++) s += i + "\n";
+  gutter.textContent = s; gutter.scrollTop = code.scrollTop;
+}
+let saveTimer = 0;
+code.addEventListener("input", () => { syncGutter(); clearTimeout(saveTimer); const k = codeKey(P); saveTimer = setTimeout(() => store.set(k, code.value), 300); });
+code.addEventListener("scroll", () => { gutter.scrollTop = code.scrollTop; });
+function insertText(txt){
+  if (!document.execCommand || !document.execCommand("insertText", false, txt)){
+    const a = code.selectionStart, b = code.selectionEnd;
+    code.value = code.value.slice(0, a) + txt + code.value.slice(b);
+    code.selectionStart = code.selectionEnd = a + txt.length;
+    code.dispatchEvent(new Event("input"));
+  }
+}
+code.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter"){ e.preventDefault(); doRun(); return; }
+  if (e.key === "Tab" && !e.shiftKey){ e.preventDefault(); insertText("    "); return; }
+  if (e.key === "Tab" && e.shiftKey){
+    e.preventDefault();
+    const a = code.selectionStart, ls = code.value.lastIndexOf("\n", a - 1) + 1;
+    const m = code.value.slice(ls).match(/^ {1,4}/);
+    if (m){ code.setSelectionRange(ls, ls + m[0].length); insertText(""); const p = Math.max(ls, a - m[0].length); code.setSelectionRange(p, p); }
+    return;
+  }
+  if (e.key === "Enter" && !e.shiftKey && !e.altKey){
+    const a = code.selectionStart, ls = code.value.lastIndexOf("\n", a - 1) + 1;
+    const line = code.value.slice(ls, a);
+    let ind = (line.match(/^\s*/) || [""])[0];
+    if (/:\s*(#.*)?$/.test(line)) ind += "    ";
+    e.preventDefault(); insertText("\n" + ind);
+  }
+});
+let resetArmed = 0;
+$("bReset").onclick = () => {
+  if (code.value !== starterFor(P) && Date.now() - resetArmed > 3000){
+    resetArmed = Date.now(); $("bReset").textContent = "Tap again to replace your code";
+    setTimeout(() => { if (Date.now() - resetArmed >= 3000) $("bReset").textContent = "Reset code"; }, 3100);
+    return;
+  }
+  resetArmed = 0; $("bReset").textContent = "Reset code";
+  code.value = starterFor(P); syncGutter(); store.set(codeKey(P), code.value);
+};
+
+
+/* ---------- running code ---------- */
+function payloadFor(cases, trace){
+  return JSON.stringify({input: P.input, wet: !!P.wet, watch: trace ? (P.watch || []) : [], sig: P.sig, trace, cases, budget: 60000});
+}
+function scrollToSim(){
+  if (window.innerWidth < 900){
+    const sim = document.querySelector(".sim"), top = sim.getBoundingClientRect().top;
+    if (top < -40 || top > 80) sim.scrollIntoView({behavior: reduceMotion() ? "auto" : "smooth", block: "start"});
+  }
+}
+function doRun(){
+  if (runState === "running"){ if (PY.canStop()) PY.kill("Stopped. You pressed Stop before your code finished."); return; }
+  if (runState !== "ready" || !PY.ready) return;
+  if (editing) toggleEdit(false);
+  setPlaying(false); runKind = "run"; setRunState("running"); scrollToSim();
+  const forP = P, forLevel = level;
+  PY.run(code.value, payloadFor([P.case(level)], true)).then(res => {
+    if (runState === "running") setRunState(PY.ready ? "ready" : "loading");
+    if (P !== forP || level !== forLevel) return;
+    $("vTests").innerHTML = "";
+    if (res.stopped || res.compileError){
+      run = null; t = 0; syncTransport(); draw();
+      writeConsole([{text: res.error || res.compileError, cls: "err"}]);
+      showVerdict({title: res.stopped ? "Run stopped" : "Your code didn’t start", text: res.stopped ? res.error : "Fix the error shown in the output below."});
+      $("verdict").className = "verdict show fail"; return;
+    }
+    const r = res.results[0];
+    const parts = [];
+    if (r.stdout) parts.push({text: r.stdout.replace(/\n$/, "")});
+    (r.events || []).filter(e => e.k === "warn").forEach(e => parts.push({text: "Warning: " + e.msg, cls: "warn"}));
+    if (r.error) parts.push({text: r.error, cls: "err"});
+    prepareRun(r);
+    if (r.ok && run.E > 0 && P.tip){ const miss = P.tip(run); if (miss.length){ const s = miss.join(" and "); parts.push({text: "Tip: name your variables " + s + " to see " + (/ and /.test(s) ? "them" : "it") + " in the simulation.", cls: "warn"}); } }
+    writeConsole(parts);
+    if (run.verdict){
+      const v = run.verdict;
+      showVerdict(v, v.status === "pass" ? " Submit to run the hidden tests." : "");
+    } else showVerdict({title: r.limit ? "Too slow" : "Your code raised an error", text: r.limit ? r.error : "See the output below for the line that failed."});
+    if (run.T > 0){ if (reduceMotion()) t = run.T; else setPlaying(true); }
+    syncTransport(); draw();
+    if (!run.verdict || run.T === 0) $("verdict").className = "verdict show " + (run.verdict ? run.verdict.status : "fail");
+  });
+}
+$("bRun").onclick = doRun;
+
+function doSubmit(){
+  if (runState !== "ready" || !PY.ready) return;
+  if (editing) toggleEdit(false);
+  setPlaying(false); runKind = "submit"; setRunState("running");
+  const forP = P;
+  const tests = P.levels().map(L => ({L, label: "Example: " + L.name})).concat(P.hidden().map(L => ({L, label: "Hidden: " + L.name})));
+  PY.run(code.value, payloadFor(tests.map(x => P.case(x.L)), false)).then(res => {
+    if (runState === "running") setRunState(PY.ready ? "ready" : "loading");
+    if (P !== forP) return;
+    run = null; t = 0; syncTransport(); draw();
+    $("phase").textContent = "Submitted"; $("phaseSub").textContent = "";
+    if (res.stopped || res.compileError){
+      writeConsole([{text: res.error || res.compileError, cls: "err"}]);
+      showVerdict({title: res.stopped ? "Submission stopped" : "Your code didn’t start", text: res.stopped ? res.error : "Fix the error shown in the output below."});
+      $("vTests").innerHTML = ""; $("verdict").className = "verdict show fail";
+      if (iv && res.stopped) recordSubmission(0, tests.length, false);
+      return;
+    }
+    const out = tests.map((x, i) => Object.assign({label: x.label}, evaluate(x.L, res.results[i], P.tier)));
+    const pass = out.filter(v => v.status === "pass").length, long = out.filter(v => v.status === "long").length;
+    const allPass = pass + long === out.length, slow = out.some(v => v.slow);
+    const longs = out.filter(v => v.status === "long").sort((a, b) => (b.ratio || 0) - (a.ratio || 0));
+    const firstBad = out.find(v => v.status === "fail") || longs[0];
+    const stdout = res.results.map(r => r.stdout).filter(Boolean).join("").replace(/\n$/, "");
+    writeConsole([{text: stdout}, firstBad && firstBad.status === "fail" ? {text: firstBad.label + ": " + firstBad.text, cls: "err"} : {}]);
+    const title = allPass && !long ? "All " + out.length + " tests passed" : allPass ? "All tests pass, with a note" : pass + " of " + out.length + " tests passed";
+    showVerdict({title, text: allPass && !long ? (iv ? "Nice work. This counts toward your interview rating." : "Solved. This problem is marked done for L" + P.tier + ".") : (firstBad.label + ". " + firstBad.title + ". " + firstBad.text)});
+    $("vTests").innerHTML = out.map(v => `<li class="${v.status}"><i>${v.status === "pass" ? "✓" : v.status === "long" ? "!" : "✗"}</i>${esc(v.label)}</li>`).join("");
+    $("verdict").className = "verdict show " + (allPass && !long ? "pass" : allPass ? "long" : "fail");
+    if (allPass && !slow){ progress.solved[P.id] = true; saveProgress(); }
+    if (iv) recordSubmission(pass + long, out.length, allPass, slow);
+    renderTabs();
+  });
+}
+function recordSubmission(pass, total, allPass, slow){
+  if (!iv) return;
+  (iv.subs[P.id] = iv.subs[P.id] || []).push({pass, total, allPass, slow: !!slow, at: Date.now()});
+  saveIv();
+  const doneAll = iv.pids.every(id => (iv.subs[id] || []).some(s => s.allPass && !s.slow));
+  if (doneAll){ const b = $("bEndIv"); if (b){ b.classList.add("ready"); b.textContent = "Both solved: finish interview"; } }
+}
+$("bSubmit").onclick = doSubmit;
+
+/* ---------- input editors ---------- */
+let tool = "shelf", paintVal = null;
+const isGridP = () => P.view === "grid";
+function toggleEdit(on){
+  editing = on; $("bEdit").setAttribute("aria-pressed", on);
+  $("bEdit").textContent = on ? "Done editing" : "Edit input";
+  $("editBar").classList.toggle("show", on && isGridP());
+  $("beltEdit").classList.toggle("show", on && !isGridP());
+  cv.classList.toggle("editing", on && isGridP());
+  if (on){
+    const tools = P.editTools || ["shelf", "start", "target"];
+    document.querySelectorAll(".tool").forEach(b => b.hidden = !tools.includes(b.dataset.tool));
+    if (!tools.includes(tool)) document.querySelector('.tool[data-tool="shelf"]').click();
+    clearRun();
+  }
+  syncEditUI();
+}
+$("bEdit").onclick = () => toggleEdit(!editing);
+document.querySelectorAll(".tool").forEach(b => b.onclick = () => {
+  tool = b.dataset.tool; document.querySelectorAll(".tool").forEach(x => x.setAttribute("aria-pressed", x === b));
+});
+function syncEditUI(){
+  if (!level || !P) return;
+  if (isGridP()){
+    $("rowsN").textContent = level.grid.length; $("colsN").textContent = level.grid[0].length;
+    $("bDelete").hidden = !level.custom; $("bSave").hidden = !P.customKey;
+  } else {
+    const arr = P.editor === "array";
+    $("wField").hidden = !arr; $("lField").hidden = !arr || !P.lim;
+    if (arr){
+      $("wLab").textContent = P.arrLabel; $("lLab").textContent = P.limLabel || "";
+      if (document.activeElement !== $("wIn")) $("wIn").value = level[P.arr].join(", ");
+      if (P.lim && document.activeElement !== $("limIn")) $("limIn").value = level[P.lim];
+    }
+  }
+}
+function edited(){
+  if (P.customKey && level.custom){
+    const cs = store.get(P.customKey, []); const i = cs.findIndex(c => c.id === level.id);
+    if (i >= 0){ const c = deep(level); delete c.custom; cs[i] = c; store.set(P.customKey, cs); }
+  } else if (level.id !== "__edited"){ level.id = "__edited"; level.name = "Edited"; fillLevelSelect(); }
+  store.set(levelKey(P), level);
+}
+function paint(p){
+  if (!p) return;
+  const [r, c] = p, V = P.vals;
+  if (tool === "shelf" || tool === "wet"){
+    if (tool === "shelf" && P.robot && (same(p, level.start) || same(p, level.target)) && !P.fixCorners) return;
+    const on = tool === "shelf" ? V.shelf : V.wet;
+    if (paintVal === null) paintVal = level.grid[r][c] === on ? V.open : on;
+    if (level.grid[r][c] === paintVal) return;
+    level.grid[r][c] = paintVal;
+  } else if (tool === "start"){
+    if (same(p, level.target)) return;
+    level.start = [r, c]; if (P.isShelf(level.grid[r][c])) level.grid[r][c] = V.open;
+  } else {
+    if (same(p, level.start)) return;
+    level.target = [r, c]; if (P.isShelf(level.grid[r][c])) level.grid[r][c] = V.open;
+  }
+  edited(); draw();
+}
+const evCell = e => { const b = cv.getBoundingClientRect(); return P.cellAt(e.clientX - b.left, e.clientY - b.top); };
+cv.addEventListener("pointerdown", e => { if (!editing || !isGridP()) return; e.preventDefault(); cv.setPointerCapture(e.pointerId); paintVal = null; paint(evCell(e)); });
+cv.addEventListener("pointermove", e => { if (!editing || !isGridP() || !cv.hasPointerCapture(e.pointerId)) return; paint(evCell(e)); });
+cv.addEventListener("pointerup", () => { paintVal = null; });
+document.querySelectorAll("[data-size]").forEach(b => b.onclick = () => {
+  const k = b.dataset.size, G = level.grid; let R = G.length, C = G[0].length;
+  if (k === "r+" && R < 16) G.push(Array(C).fill(P.vals.open));
+  if (k === "r-" && R > 1) G.pop();
+  if (k === "c+" && C < 16) G.forEach(row => row.push(P.vals.open));
+  if (k === "c-" && C > 1) G.forEach(row => row.pop());
+  R = G.length; C = G[0].length;
+  if (P.fixCorners) P.fixCorners(level);
+  else if (P.robot){
+    const fit = p => [Math.min(p[0], R-1), Math.min(p[1], C-1)];
+    level.start = fit(level.start); level.target = fit(level.target);
+    if (same(level.start, level.target) && R*C > 1) level.target = level.start[1] > 0 ? [level.start[0], level.start[1]-1] : level.start[0] > 0 ? [level.start[0]-1, 0] : [0, 1 % C];
+    [level.start, level.target].forEach(p => { if (P.isShelf(G[p[0]][p[1]])) G[p[0]][p[1]] = P.vals.open; });
+  }
+  edited(); syncEditUI(); resize();
+});
+$("bClear").onclick = () => { level.grid.forEach(row => row.fill(P.vals.open)); edited(); draw(); };
+$("bRandom").onclick = () => {
+  const R = level.grid.length, C = level.grid[0].length, V = P.vals;
+  for (let tries = 0; tries < 40; tries++){
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) level.grid[r][c] = Math.random() < (V.wet ? .2 : .3) ? V.shelf : V.open;
+    if (V.wet){
+      const blobs = 2 + Math.floor(Math.random() * 3);
+      for (let b = 0; b < blobs; b++){
+        const cr = Math.floor(Math.random()*R), cc = Math.floor(Math.random()*C), rad = 1 + Math.random()*1.6;
+        for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) if (Math.hypot(r-cr, c-cc) <= rad && level.grid[r][c] === V.open) level.grid[r][c] = V.wet;
+      }
+    }
+    if (P.fixCorners){ P.fixCorners(level); level.grid[0][0] = V.open; level.grid[R-1][C-1] = V.open; break; }
+    if (!P.robot) break;
+    level.start = [Math.floor(Math.random()*R), Math.floor(Math.random()*Math.ceil(C/3))];
+    level.target = [Math.floor(Math.random()*R), C - 1 - Math.floor(Math.random()*Math.ceil(C/3))];
+    level.grid[level.start[0]][level.start[1]] = V.open; level.grid[level.target[0]][level.target[1]] = V.open;
+    if (!same(level.start, level.target) && refBFS(level, P.isShelf).d > Math.max(R, C)) break;
+  }
+  edited(); draw();
+};
+$("bSave").onclick = () => {
+  const cs = store.get(P.customKey, []);
+  let n = cs.length + 1; while (cs.some(c => c.name === "My floor " + n)) n++;
+  const c = deep(level); c.id = "c" + Date.now().toString(36); c.name = "My floor " + n; delete c.custom;
+  cs.push(c); store.set(P.customKey, cs);
+  level = Object.assign(deep(c), {custom:true}); store.set(levelKey(P), level); fillLevelSelect(); syncEditUI();
+  $("bSave").textContent = "Saved as " + c.name;
+  setTimeout(() => $("bSave").textContent = "Save as new floor", 1800);
+};
+$("bDelete").onclick = () => {
+  if (!level.custom) return;
+  store.set(P.customKey, store.get(P.customKey, []).filter(c => c.id !== level.id));
+  toggleEdit(false); loadLevel(P.levels()[0].id);
+};
+function applyArrayInputs(){
+  const nums = $("wIn").value.split(/[\s,]+/).filter(Boolean).map(Number);
+  const lim = Number($("limIn").value);
+  let msg = "";
+  if (!nums.length || nums.some(x => !Number.isInteger(x) || x < 1 || x > P.maxV)) msg = P.arrLabel + " must be whole numbers from 1 to " + P.maxV + ".";
+  else if (nums.length > P.maxN) msg = "Use at most " + P.maxN + " values.";
+  else if (P.lim && (!Number.isInteger(lim) || lim < 1 || lim > 999)) msg = P.limLabel + " must be a whole number from 1 to 999.";
+  else if (P.limAtLeastN && lim < nums.length) msg = "The shift needs at least one minute per aisle (" + nums.length + ").";
+  $("beltMsg").textContent = msg;
+  if (msg) return;
+  level[P.arr] = nums; if (P.lim) level[P.lim] = lim; edited(); resize();
+}
+let beltTimer = 0;
+["wIn", "limIn"].forEach(id => $(id).addEventListener("input", () => { clearTimeout(beltTimer); beltTimer = setTimeout(applyArrayInputs, 250); }));
+$("bBeltRandom").onclick = () => { if (P.random){ P.random(level); $("beltMsg").textContent = ""; edited(); syncEditUI(); resize(); } };
+$("levelSel").onchange = e => { if (e.target.value !== "__edited") loadLevel(e.target.value); };
+
+/* ---------- theme ---------- */
+$("bTheme").onclick = () => {
+  const root = document.documentElement;
+  const isDark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  root.dataset.theme = isDark ? "light" : "dark"; store.set("aisle.theme", root.dataset.theme);
+  readColors(); draw();
+};
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { readColors(); draw(); });
+
+/* ---------- init ---------- */
+const th = store.get("aisle.theme", null); if (th) document.documentElement.dataset.theme = th;
+$("speed").value = store.get("aisle.speed", 45); updateSpeedLabel();
+readColors();
+code.value = "";
+switchTier(tierCur);
+new ResizeObserver(() => resize()).observe($("floorWrap"));
+window.addEventListener("resize", resize);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => draw());
+fetch("harness.py")
+  .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+  .then(src => { HARNESS = src; PY.start(); })
+  .catch(err => { console.error("Couldn’t load harness.py", err); setRunState("failed"); });
+})();
