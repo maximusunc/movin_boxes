@@ -173,12 +173,14 @@ export function drawGrid(){
     const P = S.run.ret, v = S.run.verdict;
     const u = Math.min(S.t - S.run.E, S.run.S), k = Math.floor(u), f = u - k;
     const drawn = Math.min(k + (k < v.valid ? f : 0), v.valid);
-    ctx.strokeStyle = COL.robot; ctx.lineWidth = Math.max(3, s*.14); ctx.lineCap = "round"; ctx.lineJoin = "round";
-    ctx.globalAlpha = .55; ctx.beginPath(); ctx.moveTo(P[0][1]*s+s/2, P[0][0]*s+s/2);
-    for (let i = 1; i <= Math.floor(drawn); i++) ctx.lineTo(P[i][1]*s+s/2, P[i][0]*s+s/2);
-    const fl = Math.floor(drawn), fr = drawn - fl;
-    if (fr > 0 && P[fl+1]) ctx.lineTo((P[fl][1] + (P[fl+1][1]-P[fl][1])*fr)*s+s/2, (P[fl][0] + (P[fl+1][0]-P[fl][0])*fr)*s+s/2);
-    ctx.stroke(); ctx.globalAlpha = 1;
+    if (P.length){   // an empty path (solve() returned []) has no trail to draw
+      ctx.strokeStyle = COL.robot; ctx.lineWidth = Math.max(3, s*.14); ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.globalAlpha = .55; ctx.beginPath(); ctx.moveTo(P[0][1]*s+s/2, P[0][0]*s+s/2);
+      for (let i = 1; i <= Math.floor(drawn); i++) ctx.lineTo(P[i][1]*s+s/2, P[i][0]*s+s/2);
+      const fl = Math.floor(drawn), fr = drawn - fl;
+      if (fr > 0 && P[fl+1]) ctx.lineTo((P[fl][1] + (P[fl+1][1]-P[fl][1])*fr)*s+s/2, (P[fl][0] + (P[fl+1][0]-P[fl][0])*fr)*s+s/2);
+      ctx.stroke(); ctx.globalAlpha = 1;
+    }
     if (P.length && k < v.valid){
       const a = P[k], b = P[k+1];
       rpos = [a[0] + (b[0]-a[0])*f, a[1] + (b[1]-a[1])*f]; heading = Math.atan2(b[0]-a[0], b[1]-a[1]);
