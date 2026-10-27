@@ -27,26 +27,40 @@ Python runs client-side via [Brython](https://brython.info/) loaded from jsDeliv
 
 ### Adding a problem
 
-Copy a similar file in `js/problems/` (e.g. `topk.js` for an array problem or
-`bfs.js` for a grid problem), give it a new `id` and `tier`, then update `brief`, `starter`, `levels()`,
-`hidden()` (test cases) and `check()` (grading). Finally, add it to the
-`PROBLEMS` list in `js/problems/index.js`.
+Copy a similar file in `js/problems/` (e.g. `topk.js` for an array problem, `bfs.js` for a
+grid, `bst.js` for a tree, `reverse.js` for a linked list, `minstack.js` for a design class),
+give it a new `id` and `tier`, then update `brief`, `starter`, `levels()`, `hidden()` (test
+cases), `check()` (grading) and `budget()` (the read limit). Add it to `PROBLEMS` and to a
+topic in `TOPICS`, both in `js/problems/index.js`, and add a reference solution in
+`tests/solutions/<id>.py` (plus `<id>.slow.py` to check that brute force gets flagged).
 
 ## Problems
 
-40 problems across five levels. L1 gives starter code with hints; from L3 up, a
-correct but brute-force answer fails.
+117 problems across five levels (L1 15, L2 28, L3 28, L4 27, L5 19). L1 gives starter
+code with hints; from L3 up, a correct but brute-force answer fails. At each level the
+problem bar can be filtered by topic:
 
-| Level | Patterns |
+| Topic | Covers |
 |---|---|
-| L1 Warm-up | BFS, hash map, flood fill, heap, stack, linked list, binary search, two pointers, prefix sums, bit manipulation |
-| L2 Fundamentals | Sliding window, monotonic stack, grid DP, intervals, sorting, hashing with strings, tree BFS, Kadane, greedy |
-| L3 New grad | Binary search on the answer, Dijkstra, topological sort, BST validation, prefix sum + hash map, rotated binary search, BST LCA, sliding window + hash |
-| L4 Mid-level | Union-find, 1D DP, trie, backtracking, linked list rewiring, BFS over extra state, design (LRU cache) |
-| L5 Senior | Monotonic deque, two pointers (trapping water), monotonic stack (histogram), 2D DP (edit distance), minimum spanning tree, two heaps |
+| Arrays & hashing | hash maps, prefix sums, anagram grouping, prefix sum + hash map |
+| Two pointers & windows | two pointers, sliding windows, trapping water |
+| Stacks | matching, monotonic stack and deque, path cleanup, calculators, decoding |
+| Heaps | top-k, quickselect alternative, running median, task cooldown |
+| Sorting & searching | binary search (plain, rotated, on the answer, two lists), custom sort, merge sort, partitioning |
+| Linked lists | reversing, loops (fast and slow pointers), merging two and k lists, reordering |
+| Trees & tries | DFS and BFS, BST checks, LCA, diameter, construction, DP on trees, max path sum, tries |
+| Graphs | BFS (multi-source, over extra state, bitmask), flood fill, Dijkstra, Bellman-Ford, topological sort, cycles, bipartite, union-find, MST, bridges, Eulerian paths |
+| Dynamic programming | 1D, grid, knapsack and subset sum, LIS, LCS, edit distance, word break, state machines, interval DP |
+| Backtracking | subsets, combinations, permutations, parentheses, word search, N-Queens, Sudoku |
+| Greedy & intervals | jump game, partition labels, merging and scheduling intervals, gas station, skyline |
+| Strings | run-length encoding, palindromes, pattern matching (KMP / rolling hash), text justification |
+| Math & bits | XOR, GCD, sieve, geometry, combinatorics, fast exponentiation |
+| Simulation | spiral, rotation, Game of Life |
+| Design | min stack, iterators, LRU and LFU caches, time-based store, randomized set, snapshot array, autocomplete, segment / Fenwick tree |
 
 Inputs can be lists, strings (instrumented like lists, but they keep `str` methods),
-grids, binary trees (`node.val/left/right`) and linked lists (`node.val/next`).
+grids, binary trees (`node.val/left/right`, and `TreeNode` to build your own), linked
+lists (`node.val/next`, optionally looping), or a class you write for design problems.
 
 ## Run locally
 
