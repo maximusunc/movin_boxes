@@ -770,7 +770,8 @@ def run(code, payload):
                     args = _args_for(p, case)
                     ret = fn(*args)
                 r["ok"] = True
-                r["ret"] = _jsonify(ret)
+                # _replay already converted each call's result; don't truncate long call lists
+                r["ret"] = ret if design else _jsonify(ret)
             except StepLimit:
                 r["error"] = "Stopped after " + str(S.max_reads) + " reads. That’s far more work than this input needs; check for a loop that never ends or a much slower approach."
                 r["limit"] = True
