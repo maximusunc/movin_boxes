@@ -1,4 +1,5 @@
 import { AnagramsProblem } from "./anagrams.js";
+import { AutocompleteProblem } from "./autocomplete.js";
 import { BeltProblem } from "./belt.js";
 import { BfsProblem } from "./bfs.js";
 import { BracketsProblem } from "./brackets.js";
@@ -14,6 +15,7 @@ import { KadaneProblem } from "./kadane.js";
 import { KnockProblem } from "./knock.js";
 import { LcaProblem } from "./lca.js";
 import { LevelsProblem } from "./levels.js";
+import { LfuProblem } from "./lfu.js";
 import { LookupProblem } from "./lookup.js";
 import { LoopProblem } from "./loop.js";
 import { LruProblem } from "./lru.js";
@@ -21,22 +23,27 @@ import { MedianProblem } from "./median.js";
 import { MergeProblem } from "./merge.js";
 import { MinStackProblem } from "./minstack.js";
 import { MstProblem } from "./mst.js";
+import { NestedProblem } from "./nested.js";
 import { NextProblem } from "./next.js";
 import { PackProblem } from "./pack.js";
 import { PairProblem } from "./pair.js";
 import { PalindromeProblem } from "./palindrome.js";
 import { PrefixesProblem } from "./prefixes.js";
 import { RainProblem } from "./rain.js";
+import { RandSetProblem } from "./randset.js";
 import { RangesProblem } from "./ranges.js";
+import { RangeSumProblem } from "./rangesum.js";
 import { RedundantProblem } from "./redundant.js";
 import { ReorderProblem } from "./reorder.js";
 import { ReverseProblem } from "./reverse.js";
 import { RotatedProblem } from "./rotated.js";
 import { RoutesProblem } from "./routes.js";
 import { SingleProblem } from "./single.js";
+import { SnapshotProblem } from "./snapshot.js";
 import { SpeedProblem } from "./speed.js";
 import { SpiralProblem } from "./spiral.js";
 import { SubarrayProblem } from "./subarray.js";
+import { TimeKvProblem } from "./timekv.js";
 import { TopKProblem } from "./topk.js";
 import { TopoProblem } from "./topo.js";
 import { UniqueProblem } from "./unique.js";
@@ -51,7 +58,7 @@ export const PROBLEMS = [
   // L3
   SpeedProblem, WetProblem, TopoProblem, BstProblem, SubarrayProblem, RotatedProblem, LcaProblem, UniqueProblem,
   // L4
-  RedundantProblem, CoinsProblem, PrefixesProblem, PackProblem, ReorderProblem, KnockProblem, LruProblem, BuildProblem,
+  RedundantProblem, CoinsProblem, PrefixesProblem, PackProblem, ReorderProblem, KnockProblem, LruProblem, BuildProblem, TimeKvProblem, RandSetProblem, NestedProblem, SnapshotProblem, AutocompleteProblem,
   // L5
-  WindowProblem, RainProblem, HistogramProblem, EditProblem, MstProblem, MedianProblem
+  WindowProblem, RainProblem, HistogramProblem, EditProblem, MstProblem, MedianProblem, LfuProblem, RangeSumProblem
 ];
