@@ -1,4 +1,4 @@
-import { bad, isIntArr, lvl, ok, pyRepr, ri } from "../util.js";
+import { bad, lvl, ok, pyRepr, ri } from "../util.js";
 
 /* ---------- L4: rebuild the sorting tree from two walk logs (tree construction) ---------- */
 function levelOrder(pre, ino){
