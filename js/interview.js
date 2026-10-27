@@ -1,6 +1,6 @@
 import { toggleEdit } from "./floor-editor.js";
 import { switchProblem } from "./main.js";
-import { PROBLEMS } from "./problems/index.js";
+import { PROBLEMS, TOPICS } from "./problems/index.js";
 import { S } from "./state.js";
 import { $, store } from "./util.js";
 
@@ -55,9 +55,34 @@ function renderSoon(){
 <p>You’ve unlocked it, but no problems are registered for this level. Add one in <code>js/problems/</code> and list it in <code>js/problems/index.js</code>.</p>`;
 }
 
+function renderTopics(all){
+  // Filter chips: one per topic present at this level, with solved / total counts.
+  const nav = $("topics"), topics = TOPICS.filter(t => all.some(p => p.topic === t.name));
+  let cur = store.get("aisle.topic." + tierCur, null);
+  if (cur && !topics.some(t => t.name === cur)) cur = null;
+  nav.hidden = !!iv || topics.length < 2; nav.innerHTML = "";
+  if (nav.hidden) return null;
+  const chip = (name, list) => {
+    const b = document.createElement("button"), done = list.filter(p => progress.solved[p.id]).length;
+    b.className = "topic"; b.setAttribute("aria-pressed", (cur || null) === name);
+    b.innerHTML = (name || "All") + "<small>" + done + "/" + list.length + "</small>";
+    b.onclick = () => {
+      store.set("aisle.topic." + tierCur, name);
+      const pool = name ? all.filter(p => p.topic === name) : all;
+      if (!pool.includes(S.P)) switchProblem(pool[0]); else renderTabs();
+    };
+    nav.appendChild(b);
+  };
+  chip(null, all);
+  topics.forEach(t => chip(t.name, all.filter(p => p.topic === t.name)));
+  return cur;
+}
 export function renderTabs(){
   const nav = $("probs"); nav.innerHTML = "";
-  const pool = iv ? iv.pids.map(id => PROBLEMS.find(p => p.id === id)) : tierProblems(tierCur);
+  const all = iv ? iv.pids.map(id => PROBLEMS.find(p => p.id === id)) : tierProblems(tierCur);
+  let topic = renderTopics(all);
+  if (topic && S.P && !all.filter(p => p.topic === topic).includes(S.P)){ store.set("aisle.topic." + tierCur, null); topic = renderTopics(all); }
+  const pool = topic ? all.filter(p => p.topic === topic) : all;
   pool.forEach(p => {
     const b = document.createElement("button");
     b.className = "prob"; b.setAttribute("role", "tab"); b.setAttribute("aria-selected", p === S.P);
@@ -66,6 +91,8 @@ export function renderTabs(){
     b.onclick = () => { if (p !== S.P) switchProblem(p); };
     nav.appendChild(b);
   });
+  const sel = nav.querySelector('[aria-selected="true"]');
+  if (sel) nav.scrollLeft = Math.max(0, sel.offsetLeft - nav.clientWidth / 2 + sel.offsetWidth / 2);
 }
 
 let ivTimer = 0;

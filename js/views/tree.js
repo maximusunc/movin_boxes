@@ -57,7 +57,7 @@ export function drawTree(){
     ctx.fillText(String(nd.val), x, y + 1);
     if (touched[nd.id] > 1){ ctx.fillStyle = COL.bad; ctx.font = "700 10px Barlow, system-ui, sans-serif"; ctx.fillText("×" + touched[nd.id], x + r + 6, y - r + 2); }
   });
-  if (bad != null && S.t >= S.run.T){ ctx.fillStyle = COL.bad; ctx.font = "600 12px Barlow, system-ui, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.fillText("this node breaks the sorting rule", 10, 6); }
+  if (bad != null && S.t >= S.run.T){ ctx.fillStyle = COL.bad; ctx.font = "600 12px Barlow, system-ui, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.fillText(S.P.badCaption || "this node breaks the sorting rule", 10, 6); }
   drawWatch(10, g.panelY, g.W - 20, w, S.P.panel || [], g.rows);
   resultLine(10, g.H - 14, g.W - 20);
 }

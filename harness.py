@@ -633,7 +633,7 @@ def _jsonify(x, depth=0):
     if isinstance(x, (set, frozenset)):
         return {"__s": [_jsonify(v, depth + 1) for v in list(x)[:200]]}
     if isinstance(x, (list, tuple, Arr)) or type(x).__name__ == "deque":
-        return [_jsonify(v, depth + 1) for v in list(x)[:500]]
+        return [_jsonify(v, depth + 1) for v in list(x)[:5000 if depth == 0 else 500]]
     return {"__t": type(x).__name__, "repr": repr(x)[:80]}
 
 
