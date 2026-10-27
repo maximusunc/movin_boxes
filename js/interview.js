@@ -8,8 +8,8 @@ const TIERS = [
   {n:1, name:"Warm-up", minutes:0, blurb:"Starter code with hints. Brute force passes, with a note."},
   {n:2, name:"Fundamentals", minutes:60, blurb:"Just the function signature. Brute force passes, but costs you in the interview."},
   {n:3, name:"New grad", minutes:45, blurb:"Google’s entry level. Brute force fails: the optimal approach is expected."},
-  {n:4, name:"Mid-level", minutes:45, blurb:"Coming next."},
-  {n:5, name:"Senior", minutes:45, blurb:"Coming next."}
+  {n:4, name:"Mid-level", minutes:45, blurb:"Medium problems that combine patterns: backtracking, DP, union-find, tries, design. The optimal approach is expected."},
+  {n:5, name:"Senior", minutes:45, blurb:"Hard problems: monotonic deques, two heaps, 2D DP, minimum spanning trees. The optimal approach is expected."}
 ];
 const SIGNALS = ["Strong No Hire", "No Hire", "Lean No Hire", "Lean Hire", "Hire", "Strong Hire"];
 export let progress = Object.assign({unlocked: 1, best: {}, solved: {}}, store.get("aisle.progress", {}));
@@ -51,9 +51,8 @@ export function switchTier(n){
   switchProblem(pool.find(p => p.id === want) || pool[0]);
 }
 function renderSoon(){
-  $("soonBody").innerHTML = `<h2>L${tierCur} is next on the build list</h2>
-<p>You’ve unlocked it, and the problems are on the way. L4 and L5 will add the remaining interview patterns, each with a follow-up that unlocks after you solve the first part:</p>
-<p>backtracking (pack the truck exactly), one-dimensional DP (fewest boxes for an order), linked lists (re-couple the cart train), union-find (merging warehouse zones), tries (barcode prefixes), and BFS over extra state (knock down shelves, collect every package).</p>`;
+  $("soonBody").innerHTML = `<h2>No problems at L${tierCur} yet</h2>
+<p>You’ve unlocked it, but no problems are registered for this level. Add one in <code>js/problems/</code> and list it in <code>js/problems/index.js</code>.</p>`;
 }
 
 export function renderTabs(){

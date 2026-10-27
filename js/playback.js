@@ -2,6 +2,7 @@ import { ctx, cv } from "./canvas.js";
 import { S } from "./state.js";
 import { $, store } from "./util.js";
 import { drawArray, sizeArray } from "./views/array.js";
+import { drawChain, sizeChain } from "./views/chain.js";
 import { drawGraph, sizeGraph } from "./views/graph.js";
 import { drawIntervals, sizeIntervals } from "./views/intervals.js";
 import { drawTree, sizeTree } from "./views/tree.js";
@@ -9,7 +10,8 @@ import { drawTree, sizeTree } from "./views/tree.js";
 /* ---------- canvas ---------- */
 const VIEWS = {
   array: {size: sizeArray, draw: drawArray}, intervals: {size: sizeIntervals, draw: drawIntervals},
-  graph: {size: sizeGraph, draw: drawGraph}, tree: {size: sizeTree, draw: drawTree}
+  graph: {size: sizeGraph, draw: drawGraph}, tree: {size: sizeTree, draw: drawTree},
+  chain: {size: sizeChain, draw: drawChain}
 };
 export function resize(){
   if (!S.level || !S.P) return;

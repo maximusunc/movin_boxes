@@ -1,7 +1,15 @@
 import { COL, ctx, drawWatch, liveIndex, resultLine } from "../canvas.js";
 import { S } from "../state.js";
 
-/* ---------- task graph view ---------- */
+/* ---------- graph view ----------
+   Problems describe their graph with optional hooks (defaults fit the task-order problem):
+     graphOf(L) -> {n, edges}   edges are [a, b] or [a, b, weight]; default {n: L.n, edges: L.deps}
+     edgeArg                    index of the solve() argument holding the edges (default 1)
+     directed                   draw arrowheads (default true)
+     retOrder                   treat the returned list as a visiting order (badges on nodes)
+     retEdges(ret, L)           Set of edge indices to highlight in the final frame
+     nodeLabels                 {names: [...watched vars], prefix: "in "} drawn under each node
+*/
 let graphGeo = null;
 export function sizeGraph(w){
   const W = Math.max(300, Math.min(w, 520)), gh = Math.round(Math.min(W * .72, 330));
@@ -20,26 +28,37 @@ function arrow(x1, y1, x2, y2, r){
 }
 export function drawGraph(){
   if (!graphGeo) return;
-  const g = graphGeo, n = S.level.n, deps = S.level.deps, pos = graphPos(n), r = 17;
+  const G = S.P.graphOf ? S.P.graphOf(S.level) : {n: S.level.n, edges: S.level.deps};
+  const g = graphGeo, n = G.n, deps = G.edges, pos = graphPos(n), r = 17, arg = S.P.edgeArg != null ? S.P.edgeArg : 1, directed = S.P.directed !== false;
   ctx.clearRect(0, 0, g.W, g.H);
   const idx = liveIndex(); let cur = null, w = null; const reads = new Uint16Array(deps.length);
   if (S.run){
-    for (let i = 0; i <= idx; i++){ const e = S.run.events[i]; if (e.a === 1 && e.i >= 0 && e.i < deps.length) reads[e.i]++; }
+    for (let i = 0; i <= idx; i++){ const e = S.run.events[i]; if (e.a === arg && e.i >= 0 && e.i < deps.length) reads[e.i]++; }
     if (idx >= 0){ w = S.run.wAt[idx]; if (S.t < S.run.E) cur = S.run.events[idx]; }
   }
   const final = S.run && S.run.hasRet && S.t >= S.run.E;
-  deps.forEach(([a, b], i) => {
+  const picked = final && S.P.retEdges ? S.P.retEdges(S.run.ret, S.level) : null;
+  deps.forEach(([a, b, wt], i) => {
     if (a < 0 || b < 0 || a >= n || b >= n) return;
-    const hot = cur && cur.a === 1 && cur.i === i;
-    ctx.strokeStyle = hot ? COL.flash : reads[i] ? COL.ink : COL.muted; ctx.fillStyle = ctx.strokeStyle;
-    ctx.lineWidth = hot ? 3.5 : reads[i] ? 2 : 1.3; ctx.globalAlpha = hot || reads[i] ? 1 : .6;
-    arrow(pos[a][0], pos[a][1], pos[b][0], pos[b][1], r); ctx.globalAlpha = 1;
+    const hot = cur && cur.a === arg && cur.i === i, pick = picked && picked.has(i);
+    ctx.strokeStyle = pick ? (S.run.verdict.status === "fail" ? COL.bad : COL.target) : hot ? COL.flash : reads[i] ? COL.ink : COL.muted; ctx.fillStyle = ctx.strokeStyle;
+    ctx.lineWidth = pick || hot ? 3.5 : reads[i] ? 2 : 1.3; ctx.globalAlpha = pick || hot || reads[i] ? 1 : .6;
+    if (directed) arrow(pos[a][0], pos[a][1], pos[b][0], pos[b][1], r);
+    else { ctx.beginPath(); ctx.moveTo(pos[a][0], pos[a][1]); ctx.lineTo(pos[b][0], pos[b][1]); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+    if (wt != null){
+      const mx = (pos[a][0] + pos[b][0]) / 2, my = (pos[a][1] + pos[b][1]) / 2, t = String(wt);
+      ctx.font = "600 11px Barlow, system-ui, sans-serif"; const tw = ctx.measureText(t).width + 8;
+      ctx.fillStyle = COL.panel; ctx.fillRect(mx - tw/2, my - 8, tw, 16);
+      ctx.fillStyle = pick ? ctx.strokeStyle : COL.ink; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(t, mx, my + .5);
+    }
   });
   const pick = names => { if (!w) return null; for (const nm of names) if (w[nm] !== undefined) return w[nm]; return null; };
   const listOf = v => Array.isArray(v) ? v : (v && v.__s) ? v.__s : (v && v.__d) ? v.__d.map(x => x[0]) : null;
-  const order = final ? (Array.isArray(S.run.ret) ? S.run.ret : []) : (listOf(pick(["order", "res", "result", "ans", "output"])) || []);
+  const order = final ? (S.P.retOrder && Array.isArray(S.run.ret) ? S.run.ret : []) : (listOf(pick(["order", "res", "result", "ans", "output"])) || []);
   const queue = final ? [] : (listOf(pick(["queue", "q", "ready", "stack", "frontier"])) || []);
-  let indeg = final ? null : pick(["indeg", "indegree", "in_degree", "indegrees", "deg"]);
+  const labels = S.P.nodeLabels || {names: ["indeg", "indegree", "in_degree", "indegrees", "deg"], prefix: "in "};
+  let indeg = final ? null : pick(labels.names);
   if (indeg && indeg.__d){ const arr = Array(n).fill(null); indeg.__d.forEach(([k, v]) => { if (typeof k === "number" && k >= 0 && k < n) arr[k] = v; }); indeg = arr; }
   const ordPos = new Map(); order.forEach((x, i) => { if (typeof x === "number" && !ordPos.has(x)) ordPos.set(x, i); });
   const inQ = new Set(queue.filter(x => typeof x === "number"));
@@ -56,7 +75,7 @@ export function drawGraph(){
       ctx.fillStyle = COL.panel; ctx.font = "700 11px Barlow, system-ui, sans-serif"; ctx.fillText(String(ordPos.get(i) + 1), bx, by + .5);
     }
     if (Array.isArray(indeg) && typeof indeg[i] === "number"){
-      ctx.fillStyle = COL.frontier; ctx.font = "700 11px Barlow, system-ui, sans-serif"; ctx.fillText("in " + indeg[i], x, y + r + 9);
+      ctx.fillStyle = COL.frontier; ctx.font = "700 11px Barlow, system-ui, sans-serif"; ctx.fillText(labels.prefix + indeg[i], x, y + r + 9);
     }
   }
   drawWatch(10, g.panelY, g.W - 20, w, S.P.panel || [], g.rows);

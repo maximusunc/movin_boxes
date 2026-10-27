@@ -135,7 +135,7 @@ def _summ(val, depth=0):
         return val
     if isinstance(val, str):
         return val[:24]
-    if isinstance(val, Node):
+    if isinstance(val, (Node, ListNode)):
         return {"n": val._id}
     if _instrumented(val) or depth > 2:
         return None
@@ -281,17 +281,26 @@ def _warn(msg):
 
 class Arr:
     def __init__(self, data, tag):
+        self._s = data if isinstance(data, str) else None   # set when the input is a string
         self._d = list(data)
         self._t = tag
+
+    def __getattr__(self, name):
+        # String inputs keep their str methods (s.lower(), s.split(), ...); those calls aren't traced.
+        s = self.__dict__.get("_s")
+        if s is not None:
+            return getattr(s, name)
+        raise AttributeError("'list' object has no attribute '" + name + "'")
 
     def __len__(self):
         return len(self._d)
 
     def __getitem__(self, i):
         if isinstance(i, slice):
-            return [self[k] for k in range(*i.indices(len(self._d)))]
+            part = [self[k] for k in range(*i.indices(len(self._d)))]
+            return "".join(part) if self._s is not None else part
         if not _is_int(i):
-            raise TypeError("list indices must be integers, not " + type(i).__name__)
+            raise TypeError(("string" if self._s is not None else "list") + " indices must be integers, not " + type(i).__name__)
         n = len(self._d)
         if i < -n or i >= n:
             raise IndexError("index " + str(i) + " is out of range (0.." + str(n - 1) + ")")
@@ -330,13 +339,33 @@ class Arr:
         return list(self)
 
     def __add__(self, other):
+        if self._s is not None:
+            return "".join(self) + str(other)
         return list(self) + list(other)
 
+    def __radd__(self, other):
+        if self._s is not None:
+            return str(other) + "".join(self)
+        return list(other) + list(self)
+
     def __eq__(self, other):
+        if self._s is not None:
+            return isinstance(other, (str, Arr)) and str(self) == str(other)
         return list(self) == list(other)
 
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __hash__(self):
+        if self._s is not None:
+            return hash(self._s)
+        raise TypeError("unhashable type: 'list'")
+
+    def __str__(self):
+        return self._s if self._s is not None else repr(self._d)
+
     def __repr__(self):
-        return repr(self._d)
+        return repr(self._s) if self._s is not None else repr(self._d)
 
 
 class Row:
@@ -444,6 +473,67 @@ class Node:
         return "Node(" + repr(self._v) + ")"
 
 
+class ListNode:
+    """A cart in a train. Read node.val and node.next, and set node.next to re-couple carts."""
+
+    def __init__(self, val=0, next=None, _nid=-1):
+        self._v = val
+        self._n = next
+        self._id = _nid
+
+    def _touch(self, f, extra=None):
+        _tick()
+        if S.trace:
+            ev = {"k": "node", "n": self._id, "f": f}
+            if extra:
+                ev.update(extra)
+            _record(ev)
+
+    @property
+    def val(self):
+        self._touch("v")
+        return self._v
+
+    @val.setter
+    def val(self, v):
+        self._v = v
+        self._touch("w")
+
+    @property
+    def next(self):
+        self._touch("n")
+        return self._n
+
+    @next.setter
+    def next(self, node):
+        if node is not None and not isinstance(node, ListNode):
+            raise TypeError("node.next must be a ListNode or None, not " + type(node).__name__)
+        self._n = node
+        self._touch("s", {"to": node._id if node is not None else None})
+
+    def __repr__(self):
+        return "ListNode(" + repr(self._v) + ")"
+
+
+def _build_list(vals, first_id):
+    head = None
+    for i in range(len(vals) - 1, -1, -1):
+        head = ListNode(vals[i], head, first_id + i)
+    return head
+
+
+def _chain(node):
+    vals, ids, seen = [], [], set()
+    while node is not None and len(vals) < 2000:
+        if id(node) in seen:
+            return {"__ll": vals, "ids": ids, "cycle": True}
+        seen.add(id(node))
+        vals.append(_jsonify(node._v, 3))
+        ids.append(node._id)
+        node = node._n
+    return {"__ll": vals, "ids": ids, "cycle": False}
+
+
 def _build_tree(vals):
     if not vals or vals[0] is None:
         return None
@@ -478,6 +568,10 @@ def _jsonify(x, depth=0):
         return x
     if isinstance(x, Node):
         return {"node": x._id}
+    if isinstance(x, ListNode):
+        return _chain(x)
+    if isinstance(x, Arr) and x._s is not None:
+        return x._s
     if depth > 4:
         return "..."
     if isinstance(x, dict):
@@ -535,7 +629,13 @@ def _args_for(p, case):
             return [g, tuple(case["start"]), tuple(case["target"])]
         return [g]
     if inp == "tree":
-        return [_build_tree(case["tree"])]
+        return [_build_tree(case["tree"])] + list(case.get("args", []))
+    if inp == "linked":
+        heads, off = [], 0
+        for vals in case["lists"]:
+            heads.append(_build_list(vals, off))
+            off += len(vals)
+        return heads + list(case.get("args", []))
     args = []
     arrs = case.get("arr", [0])
     for i, a in enumerate(case["args"]):
@@ -559,7 +659,7 @@ def run(code, payload):
     sys.stderr = out
     result = {"results": []}
     try:
-        ns = {"__name__": "__main__"}
+        ns = {"__name__": "__main__", "ListNode": ListNode}
         try:
             exec(compile(code, "<user>", "exec"), ns)
         except Exception:

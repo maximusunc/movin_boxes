@@ -48,7 +48,7 @@ def solve(n, deps):
     return ok("Valid order", "Every dependency is respected.");
   },
   budget(L){ return 3 * L.deps.length + 4; },
-  size(w){ return sizeGraph(w); }, draw(){ drawGraph(); },
+  retOrder: true, size(w){ return sizeGraph(w); }, draw(){ drawGraph(); },
   showRet(ret){ return Array.isArray(ret) ? pyRepr(ret) : pyRepr(ret); },
   tip(run){ return run.wAt.some(w => w && (w.indeg || w.indegree || w.in_degree)) ? [] : ["indeg"]; },
   random(L){ const n = ri(Math.random, 5, 8), perm = Array.from({length:n}, (_, i) => i).sort(() => Math.random() - .5), deps = [], seen = new Set(); for (let k = 0; k < n + 1; k++){ const a = ri(Math.random, 0, n-2), b = ri(Math.random, a+1, n-1), key = perm[a] + "," + perm[b]; if (!seen.has(key)){ seen.add(key); deps.push([perm[a], perm[b]]); } } L.n = n; L.deps = deps; }
