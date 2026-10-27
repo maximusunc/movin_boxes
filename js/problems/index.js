@@ -8,6 +8,7 @@ import { CoinsProblem } from "./coins.js";
 import { DocksProblem } from "./docks.js";
 import { EditProblem } from "./edit.js";
 import { HistogramProblem } from "./histogram.js";
+import { HitCounterProblem } from "./hitcounter.js";
 import { IslandProblem } from "./island.js";
 import { JumpProblem } from "./jump.js";
 import { KadaneProblem } from "./kadane.js";
@@ -16,15 +17,20 @@ import { LcaProblem } from "./lca.js";
 import { LevelsProblem } from "./levels.js";
 import { LookupProblem } from "./lookup.js";
 import { LoopProblem } from "./loop.js";
+import { LoopStartProblem } from "./loopstart.js";
 import { LruProblem } from "./lru.js";
 import { MedianProblem } from "./median.js";
 import { MergeProblem } from "./merge.js";
+import { MergeKProblem } from "./mergek.js";
+import { MergeTwoProblem } from "./mergetwo.js";
 import { MinStackProblem } from "./minstack.js";
 import { MstProblem } from "./mst.js";
 import { NextProblem } from "./next.js";
+import { NthEndProblem } from "./nthend.js";
 import { PackProblem } from "./pack.js";
 import { PairProblem } from "./pair.js";
 import { PalindromeProblem } from "./palindrome.js";
+import { PeekingProblem } from "./peeking.js";
 import { PrefixesProblem } from "./prefixes.js";
 import { RainProblem } from "./rain.js";
 import { RangesProblem } from "./ranges.js";
@@ -47,11 +53,11 @@ export const PROBLEMS = [
   // L1
   BfsProblem, PairProblem, IslandProblem, TopKProblem, BracketsProblem, ReverseProblem, LookupProblem, PalindromeProblem, RangesProblem, SingleProblem,
   // L2
-  BeltProblem, NextProblem, RoutesProblem, DocksProblem, MergeProblem, AnagramsProblem, LevelsProblem, KadaneProblem, JumpProblem, LoopProblem, MinStackProblem, SpiralProblem,
+  BeltProblem, NextProblem, RoutesProblem, DocksProblem, MergeProblem, AnagramsProblem, LevelsProblem, KadaneProblem, JumpProblem, LoopProblem, MinStackProblem, SpiralProblem, MergeTwoProblem, NthEndProblem,
   // L3
-  SpeedProblem, WetProblem, TopoProblem, BstProblem, SubarrayProblem, RotatedProblem, LcaProblem, UniqueProblem,
+  SpeedProblem, WetProblem, TopoProblem, BstProblem, SubarrayProblem, RotatedProblem, LcaProblem, UniqueProblem, LoopStartProblem, PeekingProblem, HitCounterProblem,
   // L4
   RedundantProblem, CoinsProblem, PrefixesProblem, PackProblem, ReorderProblem, KnockProblem, LruProblem, BuildProblem,
   // L5
-  WindowProblem, RainProblem, HistogramProblem, EditProblem, MstProblem, MedianProblem
+  WindowProblem, RainProblem, HistogramProblem, EditProblem, MstProblem, MedianProblem, MergeKProblem
 ];
