@@ -5,6 +5,7 @@ import { BracketsProblem } from "./brackets.js";
 import { BstProblem } from "./bst.js";
 import { BuildProblem } from "./build.js";
 import { CoinsProblem } from "./coins.js";
+import { CombosProblem } from "./combos.js";
 import { DocksProblem } from "./docks.js";
 import { EditProblem } from "./edit.js";
 import { HistogramProblem } from "./histogram.js";
@@ -25,7 +26,10 @@ import { NextProblem } from "./next.js";
 import { PackProblem } from "./pack.js";
 import { PairProblem } from "./pair.js";
 import { PalindromeProblem } from "./palindrome.js";
+import { ParensProblem } from "./parens.js";
+import { PermsProblem } from "./perms.js";
 import { PrefixesProblem } from "./prefixes.js";
+import { QueensProblem } from "./queens.js";
 import { RainProblem } from "./rain.js";
 import { RangesProblem } from "./ranges.js";
 import { RedundantProblem } from "./redundant.js";
@@ -37,21 +41,25 @@ import { SingleProblem } from "./single.js";
 import { SpeedProblem } from "./speed.js";
 import { SpiralProblem } from "./spiral.js";
 import { SubarrayProblem } from "./subarray.js";
+import { SubsetsProblem } from "./subsets.js";
+import { SudokuProblem } from "./sudoku.js";
 import { TopKProblem } from "./topk.js";
 import { TopoProblem } from "./topo.js";
 import { UniqueProblem } from "./unique.js";
 import { WetProblem } from "./wet.js";
 import { WindowProblem } from "./window.js";
+import { WordGridProblem } from "./wordgrid.js";
+import { WordSearchProblem } from "./wordsearch.js";
 
 export const PROBLEMS = [
   // L1
-  BfsProblem, PairProblem, IslandProblem, TopKProblem, BracketsProblem, ReverseProblem, LookupProblem, PalindromeProblem, RangesProblem, SingleProblem,
+  BfsProblem, PairProblem, IslandProblem, TopKProblem, BracketsProblem, ReverseProblem, LookupProblem, PalindromeProblem, RangesProblem, SingleProblem, SubsetsProblem,
   // L2
-  BeltProblem, NextProblem, RoutesProblem, DocksProblem, MergeProblem, AnagramsProblem, LevelsProblem, KadaneProblem, JumpProblem, LoopProblem, MinStackProblem, SpiralProblem,
+  BeltProblem, NextProblem, RoutesProblem, DocksProblem, MergeProblem, AnagramsProblem, LevelsProblem, KadaneProblem, JumpProblem, LoopProblem, MinStackProblem, SpiralProblem, PermsProblem, CombosProblem,
   // L3
-  SpeedProblem, WetProblem, TopoProblem, BstProblem, SubarrayProblem, RotatedProblem, LcaProblem, UniqueProblem,
+  SpeedProblem, WetProblem, TopoProblem, BstProblem, SubarrayProblem, RotatedProblem, LcaProblem, UniqueProblem, WordSearchProblem, ParensProblem,
   // L4
-  RedundantProblem, CoinsProblem, PrefixesProblem, PackProblem, ReorderProblem, KnockProblem, LruProblem, BuildProblem,
+  RedundantProblem, CoinsProblem, PrefixesProblem, PackProblem, ReorderProblem, KnockProblem, LruProblem, BuildProblem, QueensProblem,
   // L5
-  WindowProblem, RainProblem, HistogramProblem, EditProblem, MstProblem, MedianProblem
+  WindowProblem, RainProblem, HistogramProblem, EditProblem, MstProblem, MedianProblem, WordGridProblem, SudokuProblem
 ];
