@@ -43,7 +43,7 @@ export function switchProblem(p){
   $("legend").innerHTML = S.P.legend;
   $("fname").textContent = S.P.fname;
   $("bEdit").textContent = "Edit input";
-  $("bEdit").hidden = !!iv;
+  $("bEdit").hidden = !!iv || S.P.editor === "none";
   $("submitHint").textContent = "Submit runs " + (S.P.levels().length + S.P.hidden().length) + " tests, " + S.P.hidden().length + " of them hidden.";
   renderTabs(); fillLevelSelect(); clearRun(); resize(); syncEditUI();
 }
@@ -83,7 +83,7 @@ function prepareRun(r){
 
 /* ---------- running code ---------- */
 function payloadFor(cases, trace){
-  return JSON.stringify({input: S.P.input, wet: !!S.P.wet, watch: trace ? (S.P.watch || []) : [], sig: S.P.sig, trace, cases, budget: 60000});
+  return JSON.stringify({input: S.P.input, wet: !!S.P.wet, watch: trace ? (S.P.watch || []) : [], sig: S.P.sig, design: S.P.design || null, trace, cases, budget: 60000});
 }
 function scrollToSim(){
   if (window.innerWidth < 900){

@@ -186,7 +186,11 @@ def _user_frames():
     while f is not None and depth < 60:
         try:
             if f.f_code.co_filename == "<user>":
-                out.append(f.f_locals)
+                loc = f.f_locals
+                out.append(loc)
+                obj = loc.get("self") if isinstance(loc, dict) else None
+                if obj is not None and isinstance(getattr(obj, "__dict__", None), dict):
+                    out.append(obj.__dict__)
         except Exception:
             pass
         f = f.f_back
@@ -245,8 +249,9 @@ def _tick():
         raise StepLimit()
 
 
-def _record(ev):
-    frames = _user_frames()
+def _record(ev, frames=None):
+    if frames is None:
+        frames = _user_frames()
     if S.input == "grid":
         v, q, d = _snapshot_grid(frames)
         if v is not None:
@@ -469,8 +474,57 @@ class Node:
         self._touch("r")
         return self._r
 
+    @val.setter
+    def val(self, v):
+        self._v = v
+        self._touch("w")
+
+    @left.setter
+    def left(self, node):
+        self._l = _as_tree_child(node)
+        self._touch("sl")
+
+    @right.setter
+    def right(self, node):
+        self._r = _as_tree_child(node)
+        self._touch("sr")
+
     def __repr__(self):
-        return "Node(" + repr(self._v) + ")"
+        return "TreeNode(" + repr(self._v) + ")"
+
+
+def _as_tree_child(node):
+    if node is not None and not isinstance(node, Node):
+        raise TypeError("a child must be a TreeNode or None, not " + type(node).__name__)
+    return node
+
+
+class TreeNode(Node):
+    """A tree node you can build yourself: TreeNode(val, left=None, right=None)."""
+
+    def __init__(self, val=0, left=None, right=None):
+        Node.__init__(self, val, -1)
+        self._l = _as_tree_child(left)
+        self._r = _as_tree_child(right)
+
+
+def _tree_out(root):
+    # Level order with None gaps, like the inputs (trailing Nones trimmed).
+    vals, queue, seen = [], [root], set()
+    while queue and len(vals) < 600:
+        n = queue.pop(0)
+        if n is None:
+            vals.append(None)
+            continue
+        if id(n) in seen:
+            return {"node": root._id, "tree": vals, "cycle": True}
+        seen.add(id(n))
+        vals.append(_jsonify(n._v, 3))
+        queue.append(n._l)
+        queue.append(n._r)
+    while vals and vals[-1] is None:
+        vals.pop()
+    return {"node": root._id, "tree": vals}
 
 
 class ListNode:
@@ -567,7 +621,7 @@ def _jsonify(x, depth=0):
             return "inf" if x > 0 else "-inf"
         return x
     if isinstance(x, Node):
-        return {"node": x._id}
+        return _tree_out(x)
     if isinstance(x, ListNode):
         return _chain(x)
     if isinstance(x, Arr) and x._s is not None:
@@ -632,8 +686,21 @@ def _args_for(p, case):
         return [_build_tree(case["tree"])] + list(case.get("args", []))
     if inp == "linked":
         heads, off = [], 0
-        for vals in case["lists"]:
-            heads.append(_build_list(vals, off))
+        cycles = case.get("cycles") or []
+        for li, vals in enumerate(case["lists"]):
+            head = _build_list(vals, off)
+            pos = cycles[li] if li < len(cycles) else -1
+            if head is not None and pos is not None and 0 <= pos < len(vals):
+                tail, target, k = head, None, 0
+                while True:
+                    if k == pos:
+                        target = tail
+                    if tail._n is None:
+                        break
+                    tail = tail._n
+                    k += 1
+                tail._n = target
+            heads.append(head)
             off += len(vals)
         return heads + list(case.get("args", []))
     args = []
@@ -648,6 +715,23 @@ def _args_for(p, case):
     return args
 
 
+def _replay(cls, case):
+    # case: {"init": [constructor args], "arr": [indices of init args to instrument], "ops": [[method, *args], ...]}
+    arrs = case.get("arr", [])
+    init = [Arr([tuple(x) if isinstance(x, list) else x for x in a], i) if i in arrs else a for i, a in enumerate(case.get("init", []))]
+    obj = cls(*init)
+    out = []
+    for i, op in enumerate(case["ops"]):
+        name, args = op[0], op[1:]
+        meth = getattr(obj, name, None)
+        if meth is None or not callable(meth):
+            raise AttributeError(type(obj).__name__ + " has no method " + name + "()")
+        out.append(_jsonify(meth(*[tuple(a) if isinstance(a, list) else a for a in args])))
+        if S.trace:
+            _record({"k": "read", "a": "ops", "i": i}, [obj.__dict__] if isinstance(getattr(obj, "__dict__", None), dict) else [])
+    return out
+
+
 def run(code, payload):
     p = json.loads(payload)
     S.input = p.get("input", "array")
@@ -659,15 +743,16 @@ def run(code, payload):
     sys.stderr = out
     result = {"results": []}
     try:
-        ns = {"__name__": "__main__", "ListNode": ListNode}
+        ns = {"__name__": "__main__", "ListNode": ListNode, "TreeNode": TreeNode}
         try:
             exec(compile(code, "<user>", "exec"), ns)
         except Exception:
             result["compileError"] = _user_tb()
             return json.dumps(result)
-        fn = ns.get("solve")
+        design = p.get("design")
+        fn = ns.get(design or "solve")
         if fn is None or not callable(fn):
-            result["compileError"] = "Define a function named solve(" + p.get("sig", "...") + ")."
+            result["compileError"] = ("Define a class named " + design + "." if design else "Define a function named solve(" + p.get("sig", "...") + ").")
             return json.dumps(result)
         for ci, case in enumerate(p["cases"]):
             S.trace = bool(p.get("trace")) and ci == 0
@@ -679,8 +764,11 @@ def run(code, payload):
             r = {"ok": False}
             mark = len(out.buf)
             try:
-                args = _args_for(p, case)
-                ret = fn(*args)
+                if design:
+                    ret = _replay(fn, case)
+                else:
+                    args = _args_for(p, case)
+                    ret = fn(*args)
                 r["ok"] = True
                 r["ret"] = _jsonify(ret)
             except StepLimit:

@@ -130,6 +130,20 @@ export function drawGrid(){
     }
     ctx.globalAlpha = 1;
   }
+  // Problem hooks: cellFill(v) -> a COL key to paint a cell's contents, cellText(v, r, c) -> a label.
+  if (S.P.cellFill || S.P.cellText){
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++){
+      const v = G[r][c]; if (shelf(v)) continue;
+      const fill = S.P.cellFill && S.P.cellFill(v, r, c);
+      if (fill){ const p = s*.14; ctx.fillStyle = COL[fill] || fill; rr(c*s+p, r*s+p, s-2*p, s-2*p, s*.14); ctx.fill(); }
+      const txt = S.P.cellText && S.P.cellText(v, r, c);
+      if (txt != null && txt !== ""){
+        ctx.font = "700 " + Math.max(10, Math.round(s*(String(txt).length > 2 ? .3 : .42))) + "px 'Barlow Condensed', system-ui, sans-serif";
+        ctx.fillStyle = fill ? COL["box-ink"] : COL.ink; ctx.fillText(String(txt), c*s + s/2, r*s + s/2 + 1);
+      }
+    }
+  }
   ctx.strokeStyle = COL.seam; ctx.lineWidth = 1; ctx.beginPath();
   for (let r = 1; r < R; r++){ ctx.moveTo(0, r*s+.5); ctx.lineTo(C*s, r*s+.5); }
   for (let c = 1; c < C; c++){ ctx.moveTo(c*s+.5, 0); ctx.lineTo(c*s+.5, R*s); }

@@ -4,6 +4,7 @@ import { S } from "../state.js";
 /* ---------- linked list (cart train) view ----------
    S.level.lists is an array of value lists; the harness numbers the nodes across all
    lists in order, and records every node.val / node.next read and every node.next write.
+   S.level.cycles (optional) gives, per list, the position the last cart links back to (-1: none).
    Problems can set `pointers` (watched variable names that hold nodes). */
 let chainGeo = null;
 const POINTERS = ["head", "prev", "cur", "curr", "node", "nxt", "next_node", "tail", "slow", "fast", "dummy", "first", "second", "a", "b", "l1", "l2", "p", "q"];
@@ -37,7 +38,8 @@ export function drawChain(){
   S.treeVals = lay.pos.map(p => p.val);
   const X = id => g.pad + lay.pos[id].col * (b + g.gap), Y = id => g.top + lay.pos[id].row * g.rowH + 18;
   // next pointers: start from the input order, then replay every write up to now
-  const next = lay.pos.map((p, id) => p.last ? null : id + 1);
+  const cyc = S.level.cycles || [];
+  const next = lay.pos.map((p, id) => !p.last ? id + 1 : cyc[p.row] != null && cyc[p.row] >= 0 && cyc[p.row] < S.level.lists[p.row].length ? lay.start[p.row] + cyc[p.row] : null);
   const touched = new Uint16Array(n);
   const idx = liveIndex(); let cur = null, w = null;
   if (S.run){

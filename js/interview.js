@@ -21,7 +21,7 @@ export const saveIv = () => iv ? store.set("aisle.interview", iv) : store.del("a
 const LEVEL_KEY = {grid:"aisle.current", wet:"aisle.current.wet", belt:"aisle.current.belt", speed:"aisle.current.speed"};
 export const levelKey = p => LEVEL_KEY[p.id] || "aisle.lvl." + p.id;
 export const codeKey = p => iv ? "aisle.iv." + p.id : (p.codeKey || "aisle.code." + p.id);
-export const starterFor = p => p.tier === 1 ? p.starter : "def solve(" + p.sig + "):\n    pass\n";
+export const starterFor = p => p.tier === 1 && p.starter ? p.starter : p.design ? p.skeleton : "def solve(" + p.sig + "):\n    pass\n";
 const tierProblems = n => PROBLEMS.filter(p => p.tier === n);
 const signalIndex = s => SIGNALS.indexOf(s);
 
