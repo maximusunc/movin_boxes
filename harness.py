@@ -702,6 +702,8 @@ def _args_for(p, case):
                 tail._n = target
             heads.append(head)
             off += len(vals)
+        if case.get("as_list"):
+            heads = [heads]
         return heads + list(case.get("args", []))
     args = []
     arrs = case.get("arr", [0])
