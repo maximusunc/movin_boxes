@@ -1,18 +1,27 @@
 import { AnagramsProblem } from "./anagrams.js";
 import { BeltProblem } from "./belt.js";
 import { BfsProblem } from "./bfs.js";
+import { BipartiteProblem } from "./bipartite.js";
 import { BracketsProblem } from "./brackets.js";
+import { BridgesProblem } from "./bridges.js";
 import { BstProblem } from "./bst.js";
 import { BuildProblem } from "./build.js";
 import { CoinsProblem } from "./coins.js";
+import { CollectProblem } from "./collect.js";
+import { DeadlockProblem } from "./deadlock.js";
 import { DocksProblem } from "./docks.js";
 import { EditProblem } from "./edit.js";
+import { ExitsProblem } from "./exits.js";
 import { HistogramProblem } from "./histogram.js";
 import { IslandProblem } from "./island.js";
+import { ItineraryProblem } from "./itinerary.js";
 import { JumpProblem } from "./jump.js";
 import { KadaneProblem } from "./kadane.js";
 import { KnockProblem } from "./knock.js";
+import { KStopsProblem } from "./kstops.js";
+import { LadderProblem } from "./ladder.js";
 import { LcaProblem } from "./lca.js";
+import { LeakProblem } from "./leak.js";
 import { LevelsProblem } from "./levels.js";
 import { LookupProblem } from "./lookup.js";
 import { LoopProblem } from "./loop.js";
@@ -47,11 +56,11 @@ export const PROBLEMS = [
   // L1
   BfsProblem, PairProblem, IslandProblem, TopKProblem, BracketsProblem, ReverseProblem, LookupProblem, PalindromeProblem, RangesProblem, SingleProblem,
   // L2
-  BeltProblem, NextProblem, RoutesProblem, DocksProblem, MergeProblem, AnagramsProblem, LevelsProblem, KadaneProblem, JumpProblem, LoopProblem, MinStackProblem, SpiralProblem,
+  BeltProblem, NextProblem, RoutesProblem, DocksProblem, MergeProblem, AnagramsProblem, LevelsProblem, KadaneProblem, JumpProblem, LoopProblem, MinStackProblem, SpiralProblem, LeakProblem,
   // L3
-  SpeedProblem, WetProblem, TopoProblem, BstProblem, SubarrayProblem, RotatedProblem, LcaProblem, UniqueProblem,
+  SpeedProblem, WetProblem, TopoProblem, BstProblem, SubarrayProblem, RotatedProblem, LcaProblem, UniqueProblem, ExitsProblem, BipartiteProblem,
   // L4
-  RedundantProblem, CoinsProblem, PrefixesProblem, PackProblem, ReorderProblem, KnockProblem, LruProblem, BuildProblem,
+  RedundantProblem, CoinsProblem, PrefixesProblem, PackProblem, ReorderProblem, KnockProblem, LruProblem, BuildProblem, DeadlockProblem, LadderProblem, KStopsProblem,
   // L5
-  WindowProblem, RainProblem, HistogramProblem, EditProblem, MstProblem, MedianProblem
+  WindowProblem, RainProblem, HistogramProblem, EditProblem, MstProblem, MedianProblem, ItineraryProblem, BridgesProblem, CollectProblem
 ];
