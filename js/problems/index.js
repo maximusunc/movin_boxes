@@ -5,26 +5,34 @@ import { BracketsProblem } from "./brackets.js";
 import { BstProblem } from "./bst.js";
 import { BuildProblem } from "./build.js";
 import { CoinsProblem } from "./coins.js";
+import { CooldownProblem } from "./cooldown.js";
 import { DocksProblem } from "./docks.js";
 import { EditProblem } from "./edit.js";
+import { FuelProblem } from "./fuel.js";
 import { HistogramProblem } from "./histogram.js";
+import { InversionsProblem } from "./inversions.js";
 import { IslandProblem } from "./island.js";
 import { JumpProblem } from "./jump.js";
 import { KadaneProblem } from "./kadane.js";
 import { KnockProblem } from "./knock.js";
+import { KthLargestProblem } from "./kthlargest.js";
+import { LargestProblem } from "./largest.js";
 import { LcaProblem } from "./lca.js";
 import { LevelsProblem } from "./levels.js";
 import { LookupProblem } from "./lookup.js";
 import { LoopProblem } from "./loop.js";
 import { LruProblem } from "./lru.js";
 import { MedianProblem } from "./median.js";
+import { Median2Problem } from "./median2.js";
 import { MergeProblem } from "./merge.js";
 import { MinStackProblem } from "./minstack.js";
 import { MstProblem } from "./mst.js";
 import { NextProblem } from "./next.js";
+import { OverlapsProblem } from "./overlaps.js";
 import { PackProblem } from "./pack.js";
 import { PairProblem } from "./pair.js";
 import { PalindromeProblem } from "./palindrome.js";
+import { PickListProblem } from "./picklist.js";
 import { PrefixesProblem } from "./prefixes.js";
 import { RainProblem } from "./rain.js";
 import { RangesProblem } from "./ranges.js";
@@ -34,6 +42,7 @@ import { ReverseProblem } from "./reverse.js";
 import { RotatedProblem } from "./rotated.js";
 import { RoutesProblem } from "./routes.js";
 import { SingleProblem } from "./single.js";
+import { SortColorsProblem } from "./sortcolors.js";
 import { SpeedProblem } from "./speed.js";
 import { SpiralProblem } from "./spiral.js";
 import { SubarrayProblem } from "./subarray.js";
@@ -47,11 +56,11 @@ export const PROBLEMS = [
   // L1
   BfsProblem, PairProblem, IslandProblem, TopKProblem, BracketsProblem, ReverseProblem, LookupProblem, PalindromeProblem, RangesProblem, SingleProblem,
   // L2
-  BeltProblem, NextProblem, RoutesProblem, DocksProblem, MergeProblem, AnagramsProblem, LevelsProblem, KadaneProblem, JumpProblem, LoopProblem, MinStackProblem, SpiralProblem,
+  BeltProblem, NextProblem, RoutesProblem, DocksProblem, MergeProblem, AnagramsProblem, LevelsProblem, KadaneProblem, JumpProblem, LoopProblem, MinStackProblem, SpiralProblem, LargestProblem, PickListProblem, SortColorsProblem,
   // L3
-  SpeedProblem, WetProblem, TopoProblem, BstProblem, SubarrayProblem, RotatedProblem, LcaProblem, UniqueProblem,
+  SpeedProblem, WetProblem, TopoProblem, BstProblem, SubarrayProblem, RotatedProblem, LcaProblem, UniqueProblem, KthLargestProblem, OverlapsProblem, FuelProblem,
   // L4
-  RedundantProblem, CoinsProblem, PrefixesProblem, PackProblem, ReorderProblem, KnockProblem, LruProblem, BuildProblem,
+  RedundantProblem, CoinsProblem, PrefixesProblem, PackProblem, ReorderProblem, KnockProblem, LruProblem, BuildProblem, InversionsProblem, CooldownProblem,
   // L5
-  WindowProblem, RainProblem, HistogramProblem, EditProblem, MstProblem, MedianProblem
+  WindowProblem, RainProblem, HistogramProblem, EditProblem, MstProblem, MedianProblem, Median2Problem
 ];
