@@ -626,8 +626,8 @@ def _args_for(p, case):
         S.cols = len(data[0]) if data else 0
         g = Grid([list(r) for r in data])
         if "start" in case:
-            return [g, tuple(case["start"]), tuple(case["target"])]
-        return [g]
+            return [g, tuple(case["start"]), tuple(case["target"])] + list(case.get("args", []))
+        return [g] + list(case.get("args", []))
     if inp == "tree":
         return [_build_tree(case["tree"])] + list(case.get("args", []))
     if inp == "linked":
