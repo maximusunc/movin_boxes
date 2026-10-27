@@ -1,0 +1,12 @@
+{
+  "name": "aisle-runner",
+  "private": true,
+  "description": "Interview practice you can watch",
+  "scripts": {
+    "start": "python3 -m http.server 8000",
+    "test": "node tests/run.cjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.47.0"
+  }
+}

@@ -42,3 +42,23 @@ python3 -m http.server 8000
 
 Originally published as a Claude artifact:
 https://claude.ai/artifact/QMV17TMWzFFbG7jTt6nFLm
+
+## Tests
+
+`tests/run.cjs` opens the app in headless Chromium and, for every problem, submits
+the reference solution in `tests/solutions/<id>.py` and checks that it passes every
+example and hidden test without page errors. Where a `<id>.slow.py` exists, it also
+checks that the brute-force version is flagged (a note at L1–L2, a failure from L3 up).
+
+```sh
+npm install
+npx playwright install chromium
+npm test                # every problem
+npm test -- pair bst    # just these
+```
+
+**Spoiler warning:** `tests/solutions/` contains working solutions to every problem.
+
+`tests/shots.cjs OUT_DIR id ...` saves screenshots of the simulation panel mid-run and
+at the end, which is handy when changing a view.
+
