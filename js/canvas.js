@@ -38,6 +38,8 @@ function watchItems(v){
 }
 // Draws rows of watched variables. Returns nothing; uses up to `rows` rows of 28px.
 export function drawWatch(x, y, w, watch, names, rows){
+  // Snapshots are taken on input reads, so after solve() returns they'd show stale values.
+  if (S.run && S.run.hasRet && S.t >= S.run.E) return;
   ctx.textBaseline = "middle";
   let row = 0;
   for (const name of names){

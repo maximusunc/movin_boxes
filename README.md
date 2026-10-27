@@ -20,7 +20,9 @@ Python runs client-side via [Brython](https://brython.info/) loaded from jsDeliv
   - `interview.js`: tiers, timed interview mode, progress and scoring
   - `playback.js`, `editor.js`, `floor-editor.js`: replay controls, code
     editor, and the input/floor editor
-  - `views/`: one canvas view per input kind (grid, belt, array, intervals, graph, tree, speed)
+  - `views/`: one canvas view per input kind (grid, belt, array, intervals, graph, tree, chain for
+    linked lists, speed). Generic views take hooks from the problem; see the comment at the top of
+    `views/graph.js`, `views/intervals.js` and `views/chain.js`
   - `problems/`: one file per problem, registered in `problems/index.js`
 
 ### Adding a problem
@@ -29,6 +31,22 @@ Copy a similar file in `js/problems/` (e.g. `topk.js` for an array problem or
 `bfs.js` for a grid problem), give it a new `id` and `tier`, then update `brief`, `starter`, `levels()`,
 `hidden()` (test cases) and `check()` (grading). Finally, add it to the
 `PROBLEMS` list in `js/problems/index.js`.
+
+## Problems
+
+40 problems across five levels. L1 gives starter code with hints; from L3 up, a
+correct but brute-force answer fails.
+
+| Level | Patterns |
+|---|---|
+| L1 Warm-up | BFS, hash map, flood fill, heap, stack, linked list, binary search, two pointers, prefix sums, bit manipulation |
+| L2 Fundamentals | Sliding window, monotonic stack, grid DP, intervals, sorting, hashing with strings, tree BFS, Kadane, greedy |
+| L3 New grad | Binary search on the answer, Dijkstra, topological sort, BST validation, prefix sum + hash map, rotated binary search, BST LCA, sliding window + hash |
+| L4 Mid-level | Union-find, 1D DP, trie, backtracking, linked list rewiring, BFS over extra state, design (LRU cache) |
+| L5 Senior | Monotonic deque, two pointers (trapping water), monotonic stack (histogram), 2D DP (edit distance), minimum spanning tree, two heaps |
+
+Inputs can be lists, strings (instrumented like lists, but they keep `str` methods),
+grids, binary trees (`node.val/left/right`) and linked lists (`node.val/next`).
 
 ## Run locally
 
