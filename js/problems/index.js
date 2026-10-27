@@ -1,10 +1,13 @@
 import { AnagramsProblem } from "./anagrams.js";
+import { BalancedProblem } from "./balanced.js";
 import { BeltProblem } from "./belt.js";
 import { BfsProblem } from "./bfs.js";
 import { BracketsProblem } from "./brackets.js";
 import { BstProblem } from "./bst.js";
 import { BuildProblem } from "./build.js";
 import { CoinsProblem } from "./coins.js";
+import { DepthProblem } from "./depth.js";
+import { DiameterProblem } from "./diameter.js";
 import { DocksProblem } from "./docks.js";
 import { EditProblem } from "./edit.js";
 import { HistogramProblem } from "./histogram.js";
@@ -12,7 +15,9 @@ import { IslandProblem } from "./island.js";
 import { JumpProblem } from "./jump.js";
 import { KadaneProblem } from "./kadane.js";
 import { KnockProblem } from "./knock.js";
+import { KthProblem } from "./kth.js";
 import { LcaProblem } from "./lca.js";
+import { LcaTreeProblem } from "./lcatree.js";
 import { LevelsProblem } from "./levels.js";
 import { LookupProblem } from "./lookup.js";
 import { LoopProblem } from "./loop.js";
@@ -25,12 +30,14 @@ import { NextProblem } from "./next.js";
 import { PackProblem } from "./pack.js";
 import { PairProblem } from "./pair.js";
 import { PalindromeProblem } from "./palindrome.js";
+import { PathSumProblem } from "./pathsum.js";
 import { PrefixesProblem } from "./prefixes.js";
 import { RainProblem } from "./rain.js";
 import { RangesProblem } from "./ranges.js";
 import { RedundantProblem } from "./redundant.js";
 import { ReorderProblem } from "./reorder.js";
 import { ReverseProblem } from "./reverse.js";
+import { RightViewProblem } from "./rightview.js";
 import { RotatedProblem } from "./rotated.js";
 import { RoutesProblem } from "./routes.js";
 import { SingleProblem } from "./single.js";
@@ -39,19 +46,20 @@ import { SpiralProblem } from "./spiral.js";
 import { SubarrayProblem } from "./subarray.js";
 import { TopKProblem } from "./topk.js";
 import { TopoProblem } from "./topo.js";
+import { TreeRobProblem } from "./treerob.js";
 import { UniqueProblem } from "./unique.js";
 import { WetProblem } from "./wet.js";
 import { WindowProblem } from "./window.js";
 
 export const PROBLEMS = [
   // L1
-  BfsProblem, PairProblem, IslandProblem, TopKProblem, BracketsProblem, ReverseProblem, LookupProblem, PalindromeProblem, RangesProblem, SingleProblem,
+  BfsProblem, PairProblem, IslandProblem, TopKProblem, BracketsProblem, ReverseProblem, LookupProblem, PalindromeProblem, RangesProblem, SingleProblem, DepthProblem,
   // L2
-  BeltProblem, NextProblem, RoutesProblem, DocksProblem, MergeProblem, AnagramsProblem, LevelsProblem, KadaneProblem, JumpProblem, LoopProblem, MinStackProblem, SpiralProblem,
+  BeltProblem, NextProblem, RoutesProblem, DocksProblem, MergeProblem, AnagramsProblem, LevelsProblem, KadaneProblem, JumpProblem, LoopProblem, MinStackProblem, SpiralProblem, BalancedProblem, RightViewProblem,
   // L3
-  SpeedProblem, WetProblem, TopoProblem, BstProblem, SubarrayProblem, RotatedProblem, LcaProblem, UniqueProblem,
+  SpeedProblem, WetProblem, TopoProblem, BstProblem, SubarrayProblem, RotatedProblem, LcaProblem, UniqueProblem, DiameterProblem, KthProblem,
   // L4
-  RedundantProblem, CoinsProblem, PrefixesProblem, PackProblem, ReorderProblem, KnockProblem, LruProblem, BuildProblem,
+  RedundantProblem, CoinsProblem, PrefixesProblem, PackProblem, ReorderProblem, KnockProblem, LruProblem, BuildProblem, LcaTreeProblem, TreeRobProblem,
   // L5
-  WindowProblem, RainProblem, HistogramProblem, EditProblem, MstProblem, MedianProblem
+  WindowProblem, RainProblem, HistogramProblem, EditProblem, MstProblem, MedianProblem, PathSumProblem
 ];
